@@ -49,7 +49,7 @@ def init_db():
 
     conn.commit()
     conn.close()
-    
+
 # IMPORTANT: ensure DB tables exist when app is imported by gunicorn
 init_db()
 
@@ -200,7 +200,15 @@ def make_browser():
     - shorter timeouts
     """
     p = sync_playwright().start()
-    browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+    bbrowser = p.chromium.launch(
+    headless=True,
+    args=[
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+    ],
+)
     context = browser.new_context(locale="en-US")
     page = context.new_page()
     page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
@@ -385,3 +393,4 @@ if __name__ == "__main__":
     init_db()
     print("Starting server...")
     app.run(host="127.0.0.1", port=5000, debug=True)
+
