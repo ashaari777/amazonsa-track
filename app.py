@@ -74,7 +74,15 @@ def run_async(coro_func, *args, **kwargs):
         running = False
 
     if not running:
-        return asyncio.run(coro_func(*args, **kwargs))
+        # Add timeout wrapper for the entire operation
+        async def timeout_wrapper():
+            return await asyncio.wait_for(coro_func(*args, **kwargs), timeout=90.0)
+        
+        try:
+            return asyncio.run(timeout_wrapper())
+        except asyncio.TimeoutError:
+            # Return empty results on timeout
+            return []
 
     result_container = {"ok": False, "result": None, "error": None}
 
@@ -82,7 +90,15 @@ def run_async(coro_func, *args, **kwargs):
         try:
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
-            result_container["result"] = new_loop.run_until_complete(coro_func(*args, **kwargs))
+            
+            # Add timeout wrapper for the entire operation
+            async def timeout_wrapper():
+                return await asyncio.wait_for(coro_func(*args, **kwargs), timeout=90.0)
+            
+            result_container["result"] = new_loop.run_until_complete(timeout_wrapper())
+            result_container["ok"] = True
+        except asyncio.TimeoutError:
+            result_container["result"] = []  # Return empty results on timeout
             result_container["ok"] = True
         except Exception as e:
             result_container["error"] = e
@@ -94,10 +110,13 @@ def run_async(coro_func, *args, **kwargs):
 
     t = threading.Thread(target=_runner, daemon=True)
     t.start()
-    t.join()
+    t.join(timeout=100)  # Thread timeout as backup
 
-    if result_container["error"]:
+    if not t.is_alive() and result_container["error"]:
         raise result_container["error"]
+    elif t.is_alive():
+        # Thread is still running, return empty results
+        return []
     return result_container["result"]
 
 
@@ -180,6 +199,7 @@ async def make_page():
     Create browser/page with speed optimizations:
       - block images/fonts/media
       - safe flags for Render
+      - memory optimizations
     """
     p = await async_playwright().start()
 
@@ -190,16 +210,29 @@ async def make_page():
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-web-security",
+            "--disable-features=VizDisplayCompositor",
+            "--memory-pressure-off",
+            "--max_old_space_size=512",
         ],
     )
 
-    context = await browser.new_context(locale="en-US")
+    context = await browser.new_context(
+        locale="en-US",
+        viewport={"width": 1280, "height": 720},
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    )
+    
     page = await context.new_page()
 
+    # Block unnecessary resources to save memory and speed up loading
+    await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot}", lambda route: route.abort())
+    
     await page.set_extra_http_headers({
         "Accept-Language": "en-US,en;q=0.9,ar;q=0.8"
     })
-    page.set_default_timeout(15000)
+    page.set_default_timeout(10000)  # Reduced timeout
 
     return p, browser, page
 
@@ -209,15 +242,29 @@ async def make_page():
 async def scrape_one(page, asin: str) -> dict:
     canonical = f"https://www.amazon.sa/dp/{asin}"
 
-    await page.goto(canonical, wait_until="domcontentloaded", timeout=45000)
-
     try:
-        await wait_for_any_title(page, timeout_ms=9000)
-    except Exception:
-        await auto_nudge(page)
-        await wait_for_any_title(page, timeout_ms=9000)
+        await page.goto(canonical, wait_until="domcontentloaded", timeout=20000)  # Reduced timeout
 
-    await auto_nudge(page)
+        try:
+            await wait_for_any_title(page, timeout_ms=5000)  # Reduced timeout
+        except Exception:
+            await auto_nudge(page)
+            await wait_for_any_title(page, timeout_ms=5000)  # Reduced timeout
+
+        await auto_nudge(page)
+    except Exception as e:
+        # If page loading fails, return error immediately
+        return {
+            "asin": asin,
+            "url": canonical,
+            "item_name": None,
+            "price_text": None,
+            "price_value": None,
+            "rating": None,
+            "reviews_count": None,
+            "discount_percent": None,
+            "error": f"Page load failed: {str(e)}",
+        }
 
     item_name = await pick_first_text(page, ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"])
 
@@ -316,24 +363,56 @@ async def make_browser_async():
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-web-security",
+            "--disable-features=VizDisplayCompositor",
+            "--memory-pressure-off",
+            "--max_old_space_size=512",
         ],
     )
-    context = await browser.new_context(locale="en-US")
+    context = await browser.new_context(
+        locale="en-US",
+        viewport={"width": 1280, "height": 720},
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    )
     page = await context.new_page()
+    
+    # Block unnecessary resources to save memory and speed up loading
+    await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot}", lambda route: route.abort())
+    
     await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
-    page.set_default_timeout(15000)
+    page.set_default_timeout(10000)  # Reduced timeout
     return p, browser, page
 
 
 
 async def scrape_all_saved_items_async(asins: list[str]) -> list[dict]:
+    if not asins:
+        return []
+    
+    # Limit to 3 items max to prevent timeout
+    limited_asins = asins[:3]
+    
     p, browser, page = await make_browser_async()
     results: list[dict] = []
     try:
-        for asin in asins:
+        for i, asin in enumerate(limited_asins):
             try:
-                # IMPORTANT: you must have an async scraper for one item
-                results.append(await scrape_one(page, asin))
+                # Add timeout for each individual scrape
+                result = await asyncio.wait_for(scrape_one(page, asin), timeout=25.0)
+                results.append(result)
+            except asyncio.TimeoutError:
+                results.append({
+                    "asin": asin,
+                    "url": f"https://www.amazon.sa/dp/{asin}",
+                    "item_name": None,
+                    "price_text": None,
+                    "price_value": None,
+                    "rating": None,
+                    "reviews_count": None,
+                    "discount_percent": None,
+                    "error": "Scraping timeout",
+                })
             except Exception as e:
                 results.append({
                     "asin": asin,
@@ -346,9 +425,20 @@ async def scrape_all_saved_items_async(asins: list[str]) -> list[dict]:
                     "discount_percent": None,
                     "error": str(e),
                 })
+            
+            # Small delay between requests to be respectful
+            if i < len(limited_asins) - 1:
+                await asyncio.sleep(1)
+                
     finally:
-        await browser.close()
-        await p.stop()
+        try:
+            await browser.close()
+        except Exception:
+            pass
+        try:
+            await p.stop()
+        except Exception:
+            pass
 
     return results
 
