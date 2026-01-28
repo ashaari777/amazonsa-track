@@ -1,15 +1,17 @@
+import os
 import re
 import sqlite3
-from datetime import datetime
-from flask import Flask, request, render_template, redirect, url_for, jsonify
-from playwright.sync_api import sync_playwright
+import threading
 import asyncio
-from playwright.async_api import async_playwright
+from datetime import datetime
+from typing import Optional, Any
 
+from flask import Flask, request, render_template, redirect, url_for, jsonify
 
 app = Flask(__name__)
-DB_PATH = "amazon_tracker.db"
 
+DB_PATH = os.environ.get("DB_PATH", "amazon_tracker.db")
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 # ----------------- DB -----------------
 
@@ -23,7 +25,6 @@ def init_db():
     conn = db_conn()
     cur = conn.cursor()
 
-    # Saved items (persistent watchlist/cart)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS items (
         asin TEXT PRIMARY KEY,
@@ -32,7 +33,7 @@ def init_db():
     )
     """)
 
-    # History table (keep seller_name column if it exists in your DB; we will not use it)
+    # Keep seller_name column if it already exists in your DB; we will store NULL and not show it
     cur.execute("""
     CREATE TABLE IF NOT EXISTS price_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,28 +54,55 @@ def init_db():
     conn.commit()
     conn.close()
 
-# IMPORTANT: ensure DB tables exist when app is imported by gunicorn
+
+# IMPORTANT: create tables when gunicorn imports app.py (Render)
 init_db()
 
-def run_async(coro):
+
+# ----------------- Async runner (safe from Flask) -----------------
+
+def run_async(coro_func, *args, **kwargs):
     """
-    Run an async coroutine from a normal Flask route safely.
-    Works even if there's already an event loop.
+    Run an async coroutine function from a normal Flask route.
+    If there is already a running loop (can happen on Render), run in a separate thread with a new loop.
     """
     try:
         loop = asyncio.get_running_loop()
+        running = loop.is_running()
     except RuntimeError:
-        loop = None
+        running = False
 
-    if loop and loop.is_running():
-        # If already in an event loop, create a new loop in a new thread-like style
-        return asyncio.run(coro)
-    else:
-        return asyncio.run(coro)
+    if not running:
+        return asyncio.run(coro_func(*args, **kwargs))
+
+    result_container = {"ok": False, "result": None, "error": None}
+
+    def _runner():
+        try:
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            result_container["result"] = new_loop.run_until_complete(coro_func(*args, **kwargs))
+            result_container["ok"] = True
+        except Exception as e:
+            result_container["error"] = e
+        finally:
+            try:
+                new_loop.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join()
+
+    if result_container["error"]:
+        raise result_container["error"]
+    return result_container["result"]
+
 
 # ----------------- Scraper helpers -----------------
 
-def extract_asin(text: str) -> str | None:
+def extract_asin(text: str) -> Optional[str]:
     text = (text or "").strip()
     if re.fullmatch(r"[A-Z0-9]{10}", text):
         return text
@@ -88,27 +116,27 @@ def extract_asin(text: str) -> str | None:
     return None
 
 
-def clean(t: str | None) -> str | None:
+def clean(t: Optional[str]) -> Optional[str]:
     if not t:
         return None
     return re.sub(r"\s+", " ", t).strip()
 
 
-def first_number(t: str | None) -> float | None:
+def first_number(t: Optional[str]) -> Optional[float]:
     if not t:
         return None
     m = re.search(r"([\d.]+)", t)
     return float(m.group(1)) if m else None
 
 
-def first_int_like(t: str | None) -> int | None:
+def first_int_like(t: Optional[str]) -> Optional[int]:
     if not t:
         return None
     m = re.search(r"([\d,]+)", t)
     return int(m.group(1).replace(",", "")) if m else None
 
 
-def parse_money(t: str | None) -> float | None:
+def parse_money(t: Optional[str]) -> Optional[float]:
     if not t:
         return None
     m = re.search(r"([\d,]+(?:\.\d+)?)", t)
@@ -117,10 +145,11 @@ def parse_money(t: str | None) -> float | None:
     return float(m.group(1).replace(",", ""))
 
 
-def pick_first_text(page, selectors) -> str | None:
+async def pick_first_text(page, selectors) -> Optional[str]:
     for sel in selectors:
         try:
-            txt = clean(page.locator(sel).first.text_content())
+            loc = page.locator(sel).first
+            txt = clean(await loc.text_content())
             if txt:
                 return txt
         except Exception:
@@ -128,40 +157,72 @@ def pick_first_text(page, selectors) -> str | None:
     return None
 
 
-def auto_nudge(page) -> None:
-    # minimal nudge to trigger hydration quickly
-    page.evaluate("window.scrollTo(0, 600)")
-    page.wait_for_timeout(120)
-    page.evaluate("window.scrollTo(0, 0)")
-    page.wait_for_timeout(80)
-
-
-def wait_for_any_title(page, timeout_ms=8000) -> None:
+async def wait_for_any_title(page, timeout_ms=9000) -> None:
     for sel in ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"]:
         try:
-            page.wait_for_selector(sel, timeout=timeout_ms)
+            await page.wait_for_selector(sel, timeout=timeout_ms)
             return
         except Exception:
             continue
     raise TimeoutError("Title not found")
 
 
-def scrape_one(page, asin: str) -> dict:
+async def auto_nudge(page) -> None:
+    await page.evaluate("window.scrollTo(0, 650)")
+    await page.wait_for_timeout(120)
+    await page.evaluate("window.scrollTo(0, 0)")
+    await page.wait_for_timeout(80)
+
+
+async def make_page():
+    """
+    Create browser/page with speed optimizations:
+      - block images/fonts/media
+      - short timeouts
+      - safe flags for Render
+    """
+    p = await async_playwright().start()
+    browser = await p.chromium.launch(
+        headless=True,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+        ],
+    )
+    context = await browser.new_context(locale="en-US")
+    page = await context.new_page()
+    await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
+    page.set_default_timeout(11000)
+
+    # Block heavy resources
+    async def _route_handler(route, req):
+        if req.resource_type in ("image", "media", "font"):
+            await route.abort()
+        else:
+            await route.continue_()
+
+    await page.route("**/*", _route_handler)
+    return p, browser, page
+
+
+async def scrape_one(page, asin: str) -> dict:
     canonical = f"https://www.amazon.sa/dp/{asin}"
 
-    page.goto(canonical, wait_until="commit", timeout=45000)
+    await page.goto(canonical, wait_until="domcontentloaded", timeout=45000)
 
     try:
-        wait_for_any_title(page, timeout_ms=8000)
+        await wait_for_any_title(page, timeout_ms=9000)
     except Exception:
-        auto_nudge(page)
-        wait_for_any_title(page, timeout_ms=8000)
+        await auto_nudge(page)
+        await wait_for_any_title(page, timeout_ms=9000)
 
-    auto_nudge(page)
+    await auto_nudge(page)
 
-    item_name = pick_first_text(page, ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"])
+    item_name = await pick_first_text(page, ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"])
 
-    price_text = pick_first_text(page, [
+    price_text = await pick_first_text(page, [
         "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
         "#corePrice_feature_div .a-price .a-offscreen",
         "span.a-price > span.a-offscreen",
@@ -169,16 +230,20 @@ def scrape_one(page, asin: str) -> dict:
     ])
     price_value = parse_money(price_text)
 
-    rating_text = clean(page.locator("#acrPopover").first.get_attribute("title"))
+    rating_text = None
+    try:
+        rating_text = clean(await page.locator("#acrPopover").first.get_attribute("title"))
+    except Exception:
+        pass
     if not rating_text:
-        rating_text = pick_first_text(page, ["span[data-hook='rating-out-of-text']", "#acrPopover"])
+        rating_text = await pick_first_text(page, ["span[data-hook='rating-out-of-text']", "#acrPopover"])
     rating = first_number(rating_text)
 
-    reviews_text = pick_first_text(page, ["#acrCustomerReviewText", "span[data-hook='total-review-count']"])
+    reviews_text = await pick_first_text(page, ["#acrCustomerReviewText", "span[data-hook='total-review-count']"])
     reviews_count = first_int_like(reviews_text)
 
     discount_percent = None
-    discount_text = pick_first_text(page, [
+    discount_text = await pick_first_text(page, [
         ".savingsPercentage",
         "#corePriceDisplay_desktop_feature_div .savingsPercentage",
     ])
@@ -188,7 +253,7 @@ def scrape_one(page, asin: str) -> dict:
             discount_percent = int(m.group(1))
 
     if discount_percent is None:
-        list_price_text = pick_first_text(page, [
+        list_price_text = await pick_first_text(page, [
             "#corePriceDisplay_desktop_feature_div span.a-price.a-text-price span.a-offscreen",
             "#corePrice_feature_div span.a-price.a-text-price span.a-offscreen",
             "span.a-price.a-text-price span.a-offscreen",
@@ -211,52 +276,16 @@ def scrape_one(page, asin: str) -> dict:
     }
 
 
-def make_browser():
-    """
-    Create one browser/page with speed optimizations:
-    - block images/fonts/media
-    - shorter timeouts
-    """
-    p = sync_playwright().start()
-    bbrowser = p.chromium.launch(
-    headless=True,
-    args=[
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-    ],
-)
-    context = browser.new_context(locale="en-US")
-    page = context.new_page()
-    page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
-    page.set_default_timeout(11000)
-
-    # Block heavy assets for speed
-    page.route(
-        "**/*",
-        lambda route, request: route.abort()
-        if request.resource_type in ("image", "media", "font")
-        else route.continue_()
-    )
-
-    return p, browser, page
-
-
-def scrape_all_saved_items() -> list[dict]:
-    conn = db_conn()
-    rows = conn.execute("SELECT asin FROM items ORDER BY created_at DESC").fetchall()
-    conn.close()
-    asins = [r["asin"] for r in rows]
+async def scrape_many(asins: list[str]) -> list[dict]:
     if not asins:
         return []
 
-    results = []
-    p, browser, page = make_browser()
+    results: list[dict] = []
+    p, browser, page = await make_page()
     try:
         for asin in asins:
             try:
-                results.append(scrape_one(page, asin))
+                results.append(await scrape_one(page, asin))
             except Exception as e:
                 results.append({
                     "asin": asin,
@@ -270,24 +299,98 @@ def scrape_all_saved_items() -> list[dict]:
                     "error": str(e),
                 })
     finally:
-        browser.close()
-        p.stop()
+        try:
+            await browser.close()
+        finally:
+            await p.stop()
 
     return results
 
+# -------------------------------------------------
+import asyncio
+import threading
 
-def scrape_single_item(asin: str) -> dict:
-    p, browser, page = make_browser()
+def run_async(coro, *args, **kwargs):
     try:
-        return scrape_one(page, asin)
-    finally:
-        browser.close()
-        p.stop()
+        loop = asyncio.get_running_loop()
+        running = loop.is_running()
+    except RuntimeError:
+        running = False
 
+    if not running:
+        return asyncio.run(coro(*args, **kwargs))
+
+    out = {"result": None, "error": None}
+
+    def _t():
+        try:
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            out["result"] = new_loop.run_until_complete(coro(*args, **kwargs))
+        except Exception as e:
+            out["error"] = e
+        finally:
+            try:
+                new_loop.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_t, daemon=True)
+    t.start()
+    t.join()
+
+    if out["error"]:
+        raise out["error"]
+    return out["result"]
+
+
+async def make_browser_async():
+    browser = await p.chromium.launch(
+        headless=True,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+        ],
+    )
+    context = await browser.new_context(locale="en-US")
+    page = await context.new_page()
+    await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
+    page.set_default_timeout(15000)
+    return p, browser, page
+
+
+async def scrape_all_saved_items_async(asins: list[str]) -> list[dict]:
+    p, browser, page = await make_browser_async()
+    results: list[dict] = []
+    try:
+        for asin in asins:
+            try:
+                # IMPORTANT: you must have an async scraper for one item
+                results.append(await scrape_one_async(page, asin))
+            except Exception as e:
+                results.append({
+                    "asin": asin,
+                    "url": f"https://www.amazon.sa/dp/{asin}",
+                    "item_name": None,
+                    "price": None,
+                    "rating": None,
+                    "reviews_count": None,
+                    "discount_percent": None,
+                    "error": str(e),
+                })
+    finally:
+        await browser.close()
+        await p.stop()
+
+    return results
+
+# ----------------- History insert -----------------
 
 def insert_history(ts: str, r: dict):
     conn = db_conn()
-    # Keep seller_name column in DB but store NULL; we don't use it anymore
+    # Keep seller_name column but store NULL (seller removed from UI)
     conn.execute("""
         INSERT INTO price_history
         (asin, ts, item_name, price_text, price_value, rating, reviews_count, discount_percent, seller_name, error)
@@ -295,7 +398,7 @@ def insert_history(ts: str, r: dict):
     """, (
         r["asin"], ts, r.get("item_name"), r.get("price_text"), r.get("price_value"),
         r.get("rating"), r.get("reviews_count"), r.get("discount_percent"),
-        None,  # seller_name removed
+        None,
         r.get("error")
     ))
     conn.commit()
@@ -337,10 +440,7 @@ def add_item():
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     conn = db_conn()
-    conn.execute(
-        "INSERT OR IGNORE INTO items (asin, url, created_at) VALUES (?, ?, ?)",
-        (asin, url, now)
-    )
+    conn.execute("INSERT OR IGNORE INTO items (asin, url, created_at) VALUES (?, ?, ?)", (asin, url, now))
     conn.commit()
     conn.close()
 
@@ -359,33 +459,36 @@ def delete_item(asin):
 
 @app.route("/update", methods=["POST"])
 def update_all():
+    conn = db_conn()
+    rows = conn.execute("SELECT asin FROM items ORDER BY created_at DESC").fetchall()
+    conn.close()
+    asins = [r["asin"] for r in rows]
+
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    results = scrape_all_saved_items()
+    results = run_async(scrape_all_saved_items_async, asins)
     for r in results:
         insert_history(ts, r)
+
     return redirect(url_for("index"))
 
 
 @app.route("/update/<asin>", methods=["POST"])
 def update_one(asin):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    try:
-        r = scrape_single_item(asin)
-    except Exception as e:
-        r = {
-            "asin": asin,
-            "url": f"https://www.amazon.sa/dp/{asin}",
-            "item_name": None,
-            "price_text": None,
-            "price_value": None,
-            "rating": None,
-            "reviews_count": None,
-            "discount_percent": None,
-            "error": str(e),
-        }
+    results = run_async(scrape_all_saved_items_async, asins)
+    r = results[0] if results else {
+        "asin": asin,
+        "url": f"https://www.amazon.sa/dp/{asin}",
+        "item_name": None,
+        "price_text": None,
+        "price_value": None,
+        "rating": None,
+        "reviews_count": None,
+        "discount_percent": None,
+        "error": "No result",
+    }
     insert_history(ts, r)
     return redirect(url_for("index"))
-
 
 
 @app.route("/history/<asin>.json", methods=["GET"])
@@ -407,8 +510,26 @@ def history_json(asin):
     })
 
 
+@app.route("/cron/update", methods=["GET"])
+def cron_update():
+    # secure endpoint for Render cron job
+    key = request.args.get("key", "")
+    if not CRON_SECRET or key != CRON_SECRET:
+        return "Forbidden", 403
+
+    conn = db_conn()
+    rows = conn.execute("SELECT asin FROM items ORDER BY created_at DESC").fetchall()
+    conn.close()
+    asins = [r["asin"] for r in rows]
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    results = run_async(scrape_all_saved_items_async, asins)
+    for r in results:
+        insert_history(ts, r)
+
+    return "OK", 200
+
+
 if __name__ == "__main__":
-    init_db()
     print("Starting server...")
     app.run(host="127.0.0.1", port=5000, debug=True)
-
