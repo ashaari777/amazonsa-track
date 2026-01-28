@@ -11,6 +11,12 @@ import asyncio
 import threading
 from datetime import datetime, timedelta
 from functools import wraps
+import os
+
+def is_admin_user(user: dict) -> bool:
+    admin_email = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
+    return bool(admin_email) and user["email"].strip().lower() == admin_email
+
 
 from flask import (
     Flask, request, render_template, redirect, url_for,
@@ -890,6 +896,102 @@ def admin_user_detail(user_id):
     conn.close()
 
     return render_template("admin_user_detail.html", user=user, items=items)
+
+@app.route("/admin/user/<int:user_id>/reset", methods=["POST"])
+@admin_required
+def admin_user_reset(user_id):
+    conn = db_conn()
+    user = conn.execute(
+        "SELECT id, email FROM users WHERE id=?",
+        (user_id,)
+    ).fetchone()
+    conn.close()
+
+    if not user:
+        abort(404)
+
+    # Create reset token (30 minutes)
+    token = create_reset_token(user_id, minutes_valid=30)
+    reset_link = url_for("reset_password", token=token, _external=True)
+
+    flash(f"Password reset link for {user['email']}: {reset_link}", "ok")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/user/<int:user_id>/delete", methods=["POST"])
+@admin_required
+def admin_user_delete(user_id):
+    me = current_user()
+
+    # Safety: admin cannot delete himself
+    if me and me["id"] == user_id:
+        flash("You cannot delete your own admin account.", "error")
+        return redirect(url_for("admin_users"))
+
+    conn = db_conn()
+
+    # Delete user items + history
+    item_ids = [
+        r["id"] for r in
+        conn.execute("SELECT id FROM items WHERE user_id=?", (user_id,))
+    ]
+
+    if item_ids:
+        marks = ",".join(["?"] * len(item_ids))
+        conn.execute(f"DELETE FROM price_history WHERE item_id IN ({marks})", item_ids)
+        conn.execute(f"DELETE FROM items WHERE id IN ({marks})", item_ids)
+
+    conn.execute("DELETE FROM password_resets WHERE user_id=?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+    flash("User deleted successfully.", "ok")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/user/<int:user_id>/reset", methods=["POST"])
+@admin_required
+def admin_user_reset(user_id):
+    conn = db_conn()
+    user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    if not user:
+        abort(404)
+
+    # Create a reset token (valid 30 minutes) and show link in a flash message
+    token = create_reset_token(user_id, minutes_valid=30)
+    reset_link = url_for("reset_password", token=token, _external=True)
+
+    flash(f"Reset link for {user['email']}: {reset_link}", "ok")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/user/<int:user_id>/delete", methods=["POST"])
+@admin_required
+def admin_user_delete(user_id):
+    # Safety: don't let admin delete themselves accidentally
+    me = current_user()
+    if me and me.get("id") == user_id:
+        flash("You cannot delete your own admin account while logged in.", "error")
+        return redirect(url_for("admin_users"))
+
+    conn = db_conn()
+
+    # Delete child records manually (works even if FK cascade isn't applied)
+    item_ids = [r["id"] for r in conn.execute("SELECT id FROM items WHERE user_id=?", (user_id,)).fetchall()]
+    if item_ids:
+        q_marks = ",".join(["?"] * len(item_ids))
+        conn.execute(f"DELETE FROM price_history WHERE item_id IN ({q_marks})", item_ids)
+        conn.execute(f"DELETE FROM items WHERE id IN ({q_marks})", item_ids)
+
+    conn.execute("DELETE FROM password_resets WHERE user_id=?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+    flash("User deleted.", "ok")
+    return redirect(url_for("admin_users"))
 
 
 @app.route("/admin/items", methods=["GET"])

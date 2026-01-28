@@ -5,21 +5,45 @@
   <title>Admin - Users</title>
   <style>
     body{font-family:Arial;margin:0;background:#f5f5f5}
-    .top{background:#111;color:#fff;padding:12px 16px}
+    .top{background:#111;color:#fff;padding:12px 16px;display:flex;gap:12px;align-items:center}
     .container{max-width:1100px;margin:18px auto;padding:0 14px}
     .panel{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.08);padding:14px}
     table{width:100%;border-collapse:collapse}
-    th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+    th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;vertical-align:middle}
     a{color:#111}
+    .btn{
+      border:1px solid #ddd;background:#fff;border-radius:8px;
+      padding:6px 10px;cursor:pointer
+    }
+    .btn-danger{border-color:#f3b7b7;background:#ffecec}
+    .btn-small{font-size:12px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .note{font-size:12px;opacity:.75;margin:10px 0 0}
   </style>
 </head>
 <body>
-  <div class="top"><strong>Admin: Users</strong> • <a style="color:#fff" href="{{ url_for('index') }}">Back</a></div>
+  <div class="top">
+    <strong>Admin: Users</strong>
+    • <a style="color:#fff" href="{{ url_for('index') }}">Back</a>
+  </div>
+
   <div class="container">
     <div class="panel">
+
+      <div class="note">
+        Note: passwords are stored as hashes (not readable). Admin can reset passwords instead.
+      </div>
+
       <table>
         <thead>
-          <tr><th>Email</th><th>Role</th><th>Items</th><th>Created</th><th>Last login</th><th></th></tr>
+          <tr>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Items</th>
+            <th>Created</th>
+            <th>Last login</th>
+            <th>Actions</th>
+          </tr>
         </thead>
         <tbody>
           {% for u in users %}
@@ -29,11 +53,26 @@
               <td>{{ u["items_count"] }}</td>
               <td>{{ u["created_at"] }}</td>
               <td>{{ u["last_login_at"] if u["last_login_at"] else "-" }}</td>
-              <td><a href="{{ url_for('admin_user_detail', user_id=u['id']) }}">View</a></td>
+
+              <td>
+                <div class="actions">
+                  <a class="btn btn-small" href="{{ url_for('admin_user_detail', user_id=u['id']) }}">View</a>
+
+                  <form method="post" action="{{ url_for('admin_user_reset', user_id=u['id']) }}" style="display:inline">
+                    <button class="btn btn-small" type="submit">Reset password</button>
+                  </form>
+
+                  <form method="post" action="{{ url_for('admin_user_delete', user_id=u['id']) }}" style="display:inline"
+                        onsubmit="return confirm('Delete this user and all their items/history?');">
+                    <button class="btn btn-small btn-danger" type="submit">Delete user</button>
+                  </form>
+                </div>
+              </td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
+
     </div>
   </div>
 </body>
