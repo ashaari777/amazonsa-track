@@ -3,6 +3,9 @@ import sqlite3
 from datetime import datetime
 from flask import Flask, request, render_template, redirect, url_for, jsonify
 from playwright.sync_api import sync_playwright
+import asyncio
+from playwright.async_api import async_playwright
+
 
 app = Flask(__name__)
 DB_PATH = "amazon_tracker.db"
@@ -53,6 +56,21 @@ def init_db():
 # IMPORTANT: ensure DB tables exist when app is imported by gunicorn
 init_db()
 
+def run_async(coro):
+    """
+    Run an async coroutine from a normal Flask route safely.
+    Works even if there's already an event loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # If already in an event loop, create a new loop in a new thread-like style
+        return asyncio.run(coro)
+    else:
+        return asyncio.run(coro)
 
 # ----------------- Scraper helpers -----------------
 
