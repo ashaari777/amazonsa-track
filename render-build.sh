@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-set -o errexit
+set -e
 
 pip install -r requirements.txt
-
-# Install chromium and linux deps
 python -m playwright install chromium

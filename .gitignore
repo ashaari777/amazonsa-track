@@ -4,3 +4,4 @@ __pycache__/
 amazon_tracker.db
 .env
 
+.env

@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Admin - User Detail</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body{font-family:Arial;margin:0;background:#f5f5f5}
+    .top{background:#111;color:#fff;padding:12px 16px}
+    .container{max-width:1100px;margin:18px auto;padding:0 14px}
+    .panel{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.08);padding:14px;margin-bottom:12px}
+    .charts-row{display:flex;gap:14px;overflow-x:auto;padding-bottom:10px}
+    .card{min-width:720px;background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.08);padding:12px}
+    .muted{color:#666;font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <strong>Admin: {{ user["email"] }}</strong>
+    • <a style="color:#fff" href="{{ url_for('admin_users') }}">Users</a>
+    • <a style="color:#fff" href="{{ url_for('index') }}">Back</a>
+  </div>
+
+  <div class="container">
+    <div class="panel">
+      <div><b>Role:</b> {{ user["role"] }}</div>
+      <div><b>Created:</b> {{ user["created_at"] }}</div>
+      <div><b>Last login:</b> {{ user["last_login_at"] if user["last_login_at"] else "-" }}</div>
+    </div>
+
+    {% if not items %}
+      <div class="panel">No items for this user.</div>
+    {% else %}
+      <div class="charts-row">
+        {% for it in items %}
+          <div class="card">
+            <div style="font-weight:bold">{{ it["latest_name"] if it["latest_name"] else it["asin"] }}</div>
+            <div class="muted">
+              {{ it["latest_price_text"] if it["latest_price_text"] else "No price yet" }}
+              {% if it["latest_ts"] %} • Last: {{ it["latest_ts"] }}{% endif %}
+            </div>
+            <div style="margin-top:10px">
+              <canvas id="chart-{{ it['asin'] }}" width="640" height="440"></canvas>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+<script>
+async function loadHistory(asin, userId) {
+  const r = await fetch(`/history/${asin}.json?user_id=${userId}`);
+  return await r.json();
+}
+function buildChart(canvasId, points) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  const labels = points.map(p => p.ts);
+  const prices = points.map(p => (p.price_value === null ? null : p.price_value));
+  new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Price', data: prices, spanGaps: true, tension: 0.25 }] },
+    options: { responsive: false, scales: { x: { ticks: { maxTicksLimit: 6 } } } }
+  });
+}
+
+(async () => {
+  const userId = {{ user["id"] }};
+  const asins = {{ items|map(attribute="asin")|list|tojson }};
+  for (const asin of asins) {
+    const points = await loadHistory(asin, userId);
+    buildChart(`chart-${asin}`, points);
+  }
+})();
+</script>
+</body>
+</html>
