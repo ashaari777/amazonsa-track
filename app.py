@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional, Any
 
 from flask import Flask, request, render_template, redirect, url_for, jsonify
+from playwright.async_api import async_playwright
 
 app = Flask(__name__)
 
@@ -303,43 +304,7 @@ async def scrape_many(asins: list[str]) -> list[dict]:
             await p.stop()
 
     return results
-
 # -------------------------------------------------
-import asyncio
-import threading
-
-def run_async(coro, *args, **kwargs):
-    try:
-        loop = asyncio.get_running_loop()
-        running = loop.is_running()
-    except RuntimeError:
-        running = False
-
-    if not running:
-        return asyncio.run(coro(*args, **kwargs))
-
-    out = {"result": None, "error": None}
-
-    def _t():
-        try:
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            out["result"] = new_loop.run_until_complete(coro(*args, **kwargs))
-        except Exception as e:
-            out["error"] = e
-        finally:
-            try:
-                new_loop.close()
-            except Exception:
-                pass
-
-    t = threading.Thread(target=_t, daemon=True)
-    t.start()
-    t.join()
-
-    if out["error"]:
-        raise out["error"]
-    return out["result"]
 
 
 async def make_browser_async():
@@ -368,13 +333,14 @@ async def scrape_all_saved_items_async(asins: list[str]) -> list[dict]:
         for asin in asins:
             try:
                 # IMPORTANT: you must have an async scraper for one item
-                results.append(await scrape_one_async(page, asin))
+                results.append(await scrape_one(page, asin))
             except Exception as e:
                 results.append({
                     "asin": asin,
                     "url": f"https://www.amazon.sa/dp/{asin}",
                     "item_name": None,
-                    "price": None,
+                    "price_text": None,
+                    "price_value": None,
                     "rating": None,
                     "reviews_count": None,
                     "discount_percent": None,
@@ -475,7 +441,7 @@ def update_all():
 @app.route("/update/<asin>", methods=["POST"])
 def update_one(asin):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    results = run_async(scrape_all_saved_items_async, asins)
+    results = run_async(scrape_all_saved_items_async, [asin])
     r = results[0] if results else {
         "asin": asin,
         "url": f"https://www.amazon.sa/dp/{asin}",
