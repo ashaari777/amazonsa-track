@@ -49,6 +49,9 @@ def init_db():
 
     conn.commit()
     conn.close()
+    
+# IMPORTANT: ensure DB tables exist when app is imported by gunicorn
+init_db()
 
 
 # ----------------- Scraper helpers -----------------
