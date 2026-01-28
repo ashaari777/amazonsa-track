@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.pyc
+amazon_tracker.db
+.env
+

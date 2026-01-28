@@ -1,0 +1,171 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Amazon.sa Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    .row { display: flex; gap: 16px; align-items: stretch; flex-wrap: wrap; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; background: #fff; }
+    .w50 { flex: 1 1 380px; min-width: 320px; }
+    input[type=text] { width: 100%; padding: 10px; max-width: 100%; }
+    button { padding: 9px 14px; cursor: pointer; border-radius: 8px; border: 1px solid #ccc; background: #f7f7f7; }
+    button:hover { background: #eee; }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th { background: #f5f5f5; text-align: left; }
+    .muted { color: #666; font-size: 13px; }
+    .danger { background: #ffecec; border: 1px solid #ffb3b3; }
+    .inline { display: inline-block; margin-right: 6px; }
+    .charts { margin-top: 16px; }
+    .charts-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+    .chartbox { padding: 12px; border: 1px solid #eee; border-radius: 10px; width: 680px; background:#fff; }
+    .title { margin-top: 8px; font-weight: 700; }
+
+    /* Option 2: nicer Link button */
+    .link-btn {
+      background: #eef6ff;
+      border: 1px solid #bcdcff;
+    }
+    .link-btn:hover {
+      background: #ddeeff;
+    }
+  </style>
+</head>
+<body>
+  <h2>Amazon.sa Tracker</h2>
+  <div class="muted">
+    Add items once (URL or ASIN). They stay saved until you delete them.
+    Use <b>Update all</b> or update an item individually.
+  </div>
+
+  <div class="row" style="margin-top:14px;">
+    <div class="card w50">
+      <h3 style="margin-top:0;">Add item</h3>
+      <form method="post" action="/add">
+        <input type="text" name="item" placeholder="Paste Amazon URL or ASIN" required>
+        <div style="margin-top:10px;">
+          <button type="submit">Add</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card w50">
+      <h3 style="margin-top:0;">Update all</h3>
+      <form method="post" action="/update">
+        <button type="submit">Update all</button>
+      </form>
+      <div class="muted" style="margin-top:8px;">
+        This scrapes all saved items and adds a new record to history.
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:18px;">
+    <h3>Saved items</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ASIN</th>
+          <th>Last item name</th>
+          <th>Last price</th>
+          <th>Rating</th>
+          <th>Reviews</th>
+          <th>Discount %</th>
+          <th>Last update</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          {% set last = latest_by_asin.get(it.asin) %}
+          <tr>
+            <td>{{ it.asin }}</td>
+            <td>{{ last.item_name if last else '' }}</td>
+            <td>{{ last.price_text if last else '' }}</td>
+            <td>{{ last.rating if last else '' }}</td>
+            <td>{{ last.reviews_count if last else '' }}</td>
+            <td>{{ last.discount_percent if last else '' }}</td>
+            <td>{{ last.ts if last else '' }}</td>
+            <td>
+              <!-- Link button (opens in new tab) -->
+              <a href="https://www.amazon.sa/dp/{{ it.asin }}" target="_blank" class="inline">
+                <button type="button" class="link-btn">Link</button>
+              </a>
+
+              <!-- Update single item -->
+              <form method="post" action="/update/{{ it.asin }}" class="inline">
+                <button type="submit">Update</button>
+              </form>
+
+              <!-- Delete item -->
+              <form method="post" action="/delete/{{ it.asin }}" class="inline">
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        {% if not items %}
+          <tr><td colspan="8" class="muted">No items yet. Add your first item above.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="charts">
+    <h3>Charts</h3>
+    <div class="muted">Charts are shown in a horizontal row (wraps to next line). Canvas is 640×440.</div>
+
+    <div class="charts-row">
+      {% for it in items %}
+        {% set last = latest_by_asin.get(it.asin) %}
+        <div class="chartbox">
+          <canvas id="chart_{{ it.asin }}" width="640" height="440"></canvas>
+          <div class="title">{{ (last.item_name if last and last.item_name else it.asin) }}</div>
+          <div class="muted">{{ it.asin }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+    async function drawChart(asin) {
+      const res = await fetch(`/history/${asin}.json`);
+      const data = await res.json();
+
+      const ctx = document.getElementById(`chart_${asin}`).getContext("2d");
+      new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: data.labels,
+          datasets: [
+            { label: "Price (SAR)", data: data.prices, yAxisID: "yPrice", tension: 0.2 },
+            { label: "Discount (%)", data: data.discounts, yAxisID: "yDisc", tension: 0.2 }
+          ]
+        },
+        options: {
+          responsive: false, // keep exact 640x440
+          interaction: { mode: "index", intersect: false },
+          scales: {
+            yPrice: { type: "linear", position: "left" },
+            yDisc:  { type: "linear", position: "right", min: 0, max: 100, grid: { drawOnChartArea: false } }
+          }
+        }
+      });
+    }
+
+    (async () => {
+      const asins = [
+        {% for it in items %}
+          "{{ it.asin }}",
+        {% endfor %}
+      ];
+      for (const asin of asins) {
+        await drawChart(asin);
+      }
+    })();
+  </script>
+</body>
+</html>
