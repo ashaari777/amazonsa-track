@@ -178,10 +178,10 @@ async def make_page():
     """
     Create browser/page with speed optimizations:
       - block images/fonts/media
-      - short timeouts
       - safe flags for Render
     """
     p = await async_playwright().start()
+
     browser = await p.chromium.launch(
         headless=True,
         args=[
@@ -191,20 +191,18 @@ async def make_page():
             "--disable-dev-shm-usage",
         ],
     )
+
     context = await browser.new_context(locale="en-US")
     page = await context.new_page()
-    await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
-    page.set_default_timeout(11000)
 
-    # Block heavy resources
-    async def _route_handler(route, req):
-        if req.resource_type in ("image", "media", "font"):
-            await route.abort()
-        else:
-            await route.continue_()
+    await page.set_extra_http_headers({
+        "Accept-Language": "en-US,en;q=0.9,ar;q=0.8"
+    })
+    page.set_default_timeout(15000)
 
-    await page.route("**/*", _route_handler)
     return p, browser, page
+
+
 
 
 async def scrape_one(page, asin: str) -> dict:
@@ -345,6 +343,7 @@ def run_async(coro, *args, **kwargs):
 
 
 async def make_browser_async():
+    p = await async_playwright().start()
     browser = await p.chromium.launch(
         headless=True,
         args=[
@@ -359,6 +358,7 @@ async def make_browser_async():
     await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
     page.set_default_timeout(15000)
     return p, browser, page
+
 
 
 async def scrape_all_saved_items_async(asins: list[str]) -> list[dict]:
