@@ -4,11 +4,11 @@ import json
 import time
 import hmac
 import base64
-import sqlite3
 import hashlib
 import secrets
 import asyncio
 import threading
+import random
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import (
@@ -17,57 +17,72 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from playwright.async_api import async_playwright
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from urllib.parse import urlparse
 
 # ---------------- App config ----------------
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
-DB_PATH = os.environ.get("DATABASE_PATH", "amazon_tracker.db")
+
+# DATABASE CONFIG
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
 ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
 RESET_MODE = os.environ.get("RESET_MODE", "manual").strip().lower()
 CRON_TOKEN = os.environ.get("CRON_TOKEN", "")
 PLAYWRIGHT_LOCALE = os.environ.get("PLAYWRIGHT_LOCALE", "en-US")
-# Reduced timeouts for faster failure/retry
-PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "8000")) 
-PLAYWRIGHT_NAV_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_NAV_TIMEOUT_MS", "30000"))
+PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "15000")) 
+PLAYWRIGHT_NAV_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_NAV_TIMEOUT_MS", "45000"))
 BLOCK_HEAVY_RESOURCES = os.environ.get("BLOCK_HEAVY_RESOURCES", "1") == "1"
-# Limit parallel tabs to prevent crashing Render free tier
-MAX_CONCURRENT_SCRAPES = 3 
 
 # ---------------- DB helpers ----------------
 
 def db_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    """Connect to PostgreSQL using the environment variable."""
+    if not DATABASE_URL:
+        # Fallback for local testing if no env var is set (not recommended for prod)
+        print("CRITICAL ERROR: DATABASE_URL not set.")
+        exit(1)
+    
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
+    """Initialize PostgreSQL tables."""
     conn = db_conn()
     cur = conn.cursor()
+    
+    # Users Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             email TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
             created_at TEXT NOT NULL,
             last_login_at TEXT
-        )
+        );
     """)
+
+    # Items Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             asin TEXT NOT NULL,
             url TEXT NOT NULL,
             created_at TEXT NOT NULL,
             UNIQUE(user_id, asin),
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
+        );
     """)
+
+    # Price History Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS price_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             item_id INTEGER NOT NULL,
             ts TEXT NOT NULL,
             item_name TEXT,
@@ -78,22 +93,29 @@ def init_db():
             discount_percent INTEGER,
             error TEXT,
             FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
-        )
+        );
     """)
+
+    # Password Resets Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS password_resets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             token_hash TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             used_at TEXT,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
+        );
     """)
+
     conn.commit()
     conn.close()
 
-init_db()
+# Run DB init
+try:
+    init_db()
+except Exception as e:
+    print(f"DB Init Error: {e}")
 
 # ---------------- Auth helpers ----------------
 
@@ -101,7 +123,9 @@ def current_user():
     uid = session.get("user_id")
     if not uid: return None
     conn = db_conn()
-    u = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+    u = cur.fetchone()
     conn.close()
     return u
 
@@ -161,7 +185,7 @@ def parse_money_value(t: str | None) -> float | None:
     if not m: return None
     return float(m.group(1).replace(",", ""))
 
-# ---------------- Playwright scraping (ASYNC & PARALLEL) ----------------
+# ---------------- Playwright scraping (ROBUST SEQUENTIAL) ----------------
 
 async def pick_first_text_async(page, selectors) -> str | None:
     for sel in selectors:
@@ -188,12 +212,11 @@ async def auto_nudge_async(page) -> None:
         await page.wait_for_timeout(200)
     except Exception: pass
 
-async def configure_page(context):
-    page = await context.new_page()
-    await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
-    page.set_default_timeout(PLAYWRIGHT_TIMEOUT_MS)
-    page.set_default_navigation_timeout(PLAYWRIGHT_NAV_TIMEOUT_MS)
-    
+async def scrape_one_with_context(browser, asin: str) -> dict:
+    context = await browser.new_context(
+        locale=PLAYWRIGHT_LOCALE,
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
     if BLOCK_HEAVY_RESOURCES:
         async def route_handler(route):
             try:
@@ -203,13 +226,12 @@ async def configure_page(context):
                     await route.continue_()
             except Exception: pass
         await context.route("**/*", route_handler)
-    return page
 
-async def scrape_one_task(context, asin: str) -> dict:
-    """Scrapes a single ASIN using a fresh page from the shared context."""
-    page = await configure_page(context)
-    url = canonical_url(asin)
+    page = await context.new_page()
+    await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
+    page.set_default_timeout(PLAYWRIGHT_TIMEOUT_MS)
     
+    url = canonical_url(asin)
     error_msg = None
     item_name = None
     price = None
@@ -219,8 +241,6 @@ async def scrape_one_task(context, asin: str) -> dict:
 
     try:
         await page.goto(url, wait_until="domcontentloaded")
-        
-        # Fast title check
         try: await wait_for_any_title_async(page, timeout_ms=PLAYWRIGHT_TIMEOUT_MS)
         except Exception:
             await auto_nudge_async(page)
@@ -229,29 +249,28 @@ async def scrape_one_task(context, asin: str) -> dict:
         item_name = await pick_first_text_async(page, ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"])
         price = await pick_first_text_async(page, ["#corePriceDisplay_desktop_feature_div .a-price .a-offscreen", "#corePrice_feature_div .a-price .a-offscreen", "span.a-price > span.a-offscreen", ".a-price .a-offscreen"])
         
-        # Ratings/Reviews (Optional, fail silently)
+        if not item_name: raise Exception("Amazon blocked request (No title found)")
+
         try:
             rating_text = await page.locator("#acrPopover").first.get_attribute("title")
             rating = first_number(clean(rating_text))
         except Exception: pass
-        
         if not rating:
             rt = await pick_first_text_async(page, ["span[data-hook='rating-out-of-text']"])
             rating = first_number(rt)
-            
         reviews_text = await pick_first_text_async(page, ["#acrCustomerReviewText", "span[data-hook='total-review-count']"])
         reviews_count = first_int_like(reviews_text)
-        
-        # Discount
         discount_text = await pick_first_text_async(page, [".savingsPercentage", "#corePriceDisplay_desktop_feature_div .savingsPercentage"])
         if discount_text:
             m = re.search(r"(\d{1,3})\s*%", discount_text)
             if m: discount_percent = int(m.group(1))
-
     except Exception as e:
         error_msg = str(e)
     finally:
-        await page.close()
+        try: await page.close()
+        except: pass
+        try: await context.close()
+        except: pass
 
     return {
         "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
@@ -261,35 +280,24 @@ async def scrape_one_task(context, asin: str) -> dict:
         "error": error_msg
     }
 
-async def scrape_many_parallel(asins: list[str]) -> dict[str, dict]:
-    """Scrapes multiple ASINs in parallel using a semaphore to limit concurrency."""
+async def scrape_many_sequential_optimized(asins: list[str]) -> dict[str, dict]:
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
         )
-        context = await browser.new_context(locale=PLAYWRIGHT_LOCALE)
-        
-        # Semaphore to limit simultaneous tabs (prevent CPU overload)
-        sem = asyncio.Semaphore(MAX_CONCURRENT_SCRAPES)
-        
-        async def sem_task(asin):
-            async with sem:
-                return await scrape_one_task(context, asin)
-
-        tasks = [sem_task(asin) for asin in asins]
-        results_list = await asyncio.gather(*tasks)
-        
+        results = {}
+        for i, asin in enumerate(asins):
+            if i > 0: await asyncio.sleep(2.0)
+            data = await scrape_one_with_context(browser, asin)
+            results[asin] = data
         await browser.close()
-        
-        # Convert list back to dict keyed by ASIN
-        return {r["asin"]: r for r in results_list}
+        return results
 
 def run_async(coro_func, *args, **kwargs):
     try: asyncio.get_running_loop(); running = True
     except RuntimeError: running = False
     if not running: return asyncio.run(coro_func(*args, **kwargs))
-    
     out = {"result": None, "error": None}
     def worker():
         try: out["result"] = asyncio.run(coro_func(*args, **kwargs))
@@ -303,72 +311,101 @@ def run_async(coro_func, *args, **kwargs):
 
 def get_user_items(user_id: int):
     conn = db_conn()
-    items = conn.execute("SELECT * FROM items WHERE user_id=? ORDER BY created_at DESC", (user_id,)).fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM items WHERE user_id=%s ORDER BY created_at DESC", (user_id,))
+    items = cur.fetchall()
     conn.close()
     return items
 
 def get_latest_history_for_item(item_id: int):
     conn = db_conn()
-    row = conn.execute("SELECT * FROM price_history WHERE item_id=? ORDER BY ts DESC LIMIT 1", (item_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1", (item_id,))
+    row = cur.fetchone()
     conn.close()
     return row
 
 def insert_item(user_id: int, asin: str):
     conn = db_conn()
-    conn.execute("INSERT OR IGNORE INTO items(user_id, asin, url, created_at) VALUES(?,?,?,?)", (user_id, asin, canonical_url(asin), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    cur = conn.cursor()
+    # Postgres "ON CONFLICT" replaces "INSERT OR IGNORE"
+    cur.execute("""
+        INSERT INTO items(user_id, asin, url, created_at) 
+        VALUES(%s, %s, %s, %s) 
+        ON CONFLICT (user_id, asin) DO NOTHING
+    """, (user_id, asin, canonical_url(asin), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
 
 def delete_item(user_id: int, asin: str):
     conn = db_conn()
     cur = conn.cursor()
-    item = cur.execute("SELECT id FROM items WHERE user_id=? AND asin=?", (user_id, asin)).fetchone()
+    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (user_id, asin))
+    item = cur.fetchone()
     if item:
-        cur.execute("DELETE FROM price_history WHERE item_id=?", (item["id"],))
-        cur.execute("DELETE FROM items WHERE id=?", (item["id"],))
+        cur.execute("DELETE FROM price_history WHERE item_id=%s", (item["id"],))
+        cur.execute("DELETE FROM items WHERE id=%s", (item["id"],))
     conn.commit()
     conn.close()
 
 def write_history_for_item(item_id: int, data: dict):
-    # --- LOGIC TO SKIP DUPLICATES ---
     latest = get_latest_history_for_item(item_id)
     new_price = data.get("price_value")
     
     if latest:
         old_price = latest["price_value"]
-        # If new price is None (error/out of stock), we might still want to record it to show error
-        # But if both are valid numbers and equal, skip.
         if new_price is not None and old_price is not None and new_price == old_price:
-             # Prices are exactly the same, do not record to DB
              return
              
     conn = db_conn()
-    conn.execute("INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, rating, reviews_count, discount_percent, error) VALUES(?,?,?,?,?,?,?,?,?)", 
-                 (item_id, data.get("timestamp"), data.get("item_name"), data.get("price_text"), data.get("price_value"), data.get("rating"), data.get("reviews_count"), data.get("discount_percent"), data.get("error")))
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO price_history(
+            item_id, ts, item_name, price_text, price_value, rating, reviews_count, discount_percent, error
+        ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (
+        item_id,
+        data.get("timestamp"),
+        data.get("item_name"),
+        data.get("price_text"),
+        data.get("price_value"),
+        data.get("rating"),
+        data.get("reviews_count"),
+        data.get("discount_percent"),
+        data.get("error"),
+    ))
     conn.commit()
     conn.close()
 
 def get_item_id(user_id: int, asin: str):
     conn = db_conn()
-    row = conn.execute("SELECT id FROM items WHERE user_id=? AND asin=?", (user_id, asin)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (user_id, asin))
+    row = cur.fetchone()
     conn.close()
     return row["id"] if row else None
 
 def get_item_id_admin(user_id: int, asin: str):
     conn = db_conn()
-    row = conn.execute("SELECT id FROM items WHERE user_id=? AND asin=?", (user_id, asin)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (user_id, asin))
+    row = cur.fetchone()
     conn.close()
     return row["id"] if row else None
 
 def list_all_items_distinct_asins():
     conn = db_conn()
-    rows = conn.execute("SELECT DISTINCT asin FROM items").fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT asin FROM items")
+    rows = cur.fetchall()
     conn.close()
     return [r["asin"] for r in rows]
 
 def list_all_item_ids_for_asin(asin: str):
     conn = db_conn()
-    rows = conn.execute("SELECT id FROM items WHERE asin=?", (asin,)).fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM items WHERE asin=%s", (asin,))
+    rows = cur.fetchall()
     conn.close()
     return [r["id"] for r in rows]
 
@@ -382,7 +419,8 @@ def create_reset_token(user_id: int, minutes_valid: int = 30) -> str:
     token_hash = _hash_token(token)
     expires_at = (datetime.utcnow() + timedelta(minutes=minutes_valid)).strftime("%Y-%m-%d %H:%M:%S")
     conn = db_conn()
-    conn.execute("INSERT INTO password_resets(user_id, token_hash, expires_at, used_at) VALUES(?,?,?,NULL)", (user_id, token_hash, expires_at))
+    cur = conn.cursor()
+    cur.execute("INSERT INTO password_resets(user_id, token_hash, expires_at, used_at) VALUES(%s, %s, %s, NULL)", (user_id, token_hash, expires_at))
     conn.commit()
     conn.close()
     return token
@@ -391,13 +429,16 @@ def verify_reset_token(token: str):
     token_hash = _hash_token(token)
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     conn = db_conn()
-    row = conn.execute("SELECT * FROM password_resets WHERE token_hash=? AND used_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1", (token_hash, now)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM password_resets WHERE token_hash=%s AND used_at IS NULL AND expires_at > %s ORDER BY id DESC LIMIT 1", (token_hash, now))
+    row = cur.fetchone()
     conn.close()
     return row
 
 def consume_reset_token(reset_id: int):
     conn = db_conn()
-    conn.execute("UPDATE password_resets SET used_at=? WHERE id=?", (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), reset_id))
+    cur = conn.cursor()
+    cur.execute("UPDATE password_resets SET used_at=%s WHERE id=%s", (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), reset_id))
     conn.commit()
     conn.close()
 
@@ -415,10 +456,11 @@ def register():
         flash("Passwords do not match.", "error"); return redirect(url_for("register"))
     role = "admin" if is_admin_email(email) else "user"
     conn = db_conn()
+    cur = conn.cursor()
     try:
-        conn.execute("INSERT INTO users(email, password_hash, role, created_at) VALUES(?,?,?,?)", (email, generate_password_hash(password), role, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+        cur.execute("INSERT INTO users(email, password_hash, role, created_at) VALUES(%s, %s, %s, %s)", (email, generate_password_hash(password), role, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit()
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
         flash("This email is already registered. Please login.", "error"); return redirect(url_for("login"))
     finally: conn.close()
     flash("Account created. Please login.", "ok"); return redirect(url_for("login"))
@@ -429,19 +471,23 @@ def login():
     email = (request.form.get("email") or "").strip().lower()
     password = request.form.get("password") or ""
     conn = db_conn()
-    user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE email=%s", (email,))
+    user = cur.fetchone()
     conn.close()
     if not user or not check_password_hash(user["password_hash"], password):
         flash("Invalid email or password.", "error"); return redirect(url_for("login"))
     if is_admin_email(email) and user["role"] != "admin":
         conn = db_conn()
-        conn.execute("UPDATE users SET role='admin' WHERE id=?", (user["id"],))
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET role='admin' WHERE id=%s", (user["id"],))
         conn.commit()
         conn.close()
         user = dict(user); user["role"] = "admin"
     session["user_id"] = user["id"]; session["role"] = user["role"]
     conn = db_conn()
-    conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), user["id"]))
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET last_login_at=%s WHERE id=%s", (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), user["id"]))
     conn.commit()
     conn.close()
     return redirect(url_for("index"))
@@ -457,7 +503,9 @@ def forgot():
     if request.method == "GET": return render_template("forgot.html", reset_link=None)
     email = (request.form.get("email") or "").strip().lower()
     conn = db_conn()
-    user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE email=%s", (email,))
+    user = cur.fetchone()
     conn.close()
     reset_link = None
     if user and RESET_MODE == "manual":
@@ -477,7 +525,8 @@ def reset_password(token):
     if not password or password != password2:
         flash("Passwords do not match.", "error"); return redirect(url_for("reset_password", token=token))
     conn = db_conn()
-    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(password), row["user_id"]))
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (generate_password_hash(password), row["user_id"]))
     conn.commit()
     conn.close()
     consume_reset_token(row["id"])
@@ -534,8 +583,8 @@ def update_all():
     if not asins:
         flash("No items to update.", "error"); return redirect(url_for("index"))
     
-    # Use the PARALLEL scraper now
-    results_by_asin = run_async(scrape_many_parallel, asins)
+    # Use SEQUENTIAL scraper
+    results_by_asin = run_async(scrape_many_sequential_optimized, asins)
     
     for it in items:
         data = results_by_asin.get(it["asin"])
@@ -550,8 +599,8 @@ def update_one(asin):
     item_id = get_item_id(u["id"], asin)
     if not item_id: abort(404)
     
-    # Use parallel scraper even for one item (reuses code)
-    results_by_asin = run_async(scrape_many_parallel, [asin])
+    # Reuse sequential scraper logic
+    results_by_asin = run_async(scrape_many_sequential_optimized, [asin])
     
     data = results_by_asin.get(asin)
     if data: write_history_for_item(item_id, data)
@@ -568,7 +617,9 @@ def history_json(asin):
     item_id = get_item_id_admin(user_id, asin)
     if not item_id: return jsonify([])
     conn = db_conn()
-    rows = conn.execute("SELECT ts, item_name, price_value, price_text, discount_percent FROM price_history WHERE item_id=? ORDER BY ts ASC LIMIT 80", (item_id,)).fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT ts, item_name, price_value, price_text, discount_percent FROM price_history WHERE item_id=%s ORDER BY ts ASC LIMIT 80", (item_id,))
+    rows = cur.fetchall()
     conn.close()
     out = []
     for r in rows:
@@ -585,7 +636,9 @@ def admin_home(): return redirect(url_for("admin_users"))
 @admin_required
 def admin_users():
     conn = db_conn()
-    users = conn.execute("SELECT u.*, (SELECT COUNT(*) FROM items i WHERE i.user_id=u.id) AS items_count FROM users u ORDER BY created_at DESC").fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT u.*, (SELECT COUNT(*) FROM items i WHERE i.user_id=u.id) AS items_count FROM users u ORDER BY created_at DESC")
+    users = cur.fetchall()
     conn.close()
     return render_template("admin_users.html", users=users)
 
@@ -593,15 +646,18 @@ def admin_users():
 @admin_required
 def admin_user_detail(user_id):
     conn = db_conn()
-    user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE id=%s", (user_id,))
+    user = cur.fetchone()
     if not user: conn.close(); abort(404)
-    items = conn.execute("""
+    cur.execute("""
         SELECT i.*,
                (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
                (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text,
                (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
-        FROM items i WHERE i.user_id=? ORDER BY i.created_at DESC
-    """, (user_id,)).fetchall()
+        FROM items i WHERE i.user_id=%s ORDER BY i.created_at DESC
+    """, (user_id,))
+    items = cur.fetchall()
     conn.close()
     return render_template("admin_user_detail.html", user=user, items=items)
 
@@ -609,7 +665,9 @@ def admin_user_detail(user_id):
 @admin_required
 def admin_user_reset(user_id):
     conn = db_conn()
-    user = conn.execute("SELECT id, email FROM users WHERE id=?", (user_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT id, email FROM users WHERE id=%s", (user_id,))
+    user = cur.fetchone()
     conn.close()
     if not user: abort(404)
     token = create_reset_token(user_id, minutes_valid=30)
@@ -624,13 +682,16 @@ def admin_user_delete(user_id):
     if me and me["id"] == user_id:
         flash("You cannot delete your own admin account.", "error"); return redirect(url_for("admin_users"))
     conn = db_conn()
-    item_ids = [r["id"] for r in conn.execute("SELECT id FROM items WHERE user_id=?", (user_id,))]
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM items WHERE user_id=%s", (user_id,))
+    item_rows = cur.fetchall()
+    item_ids = [r["id"] for r in item_rows]
     if item_ids:
-        marks = ",".join(["?"] * len(item_ids))
-        conn.execute(f"DELETE FROM price_history WHERE item_id IN ({marks})", item_ids)
-        conn.execute(f"DELETE FROM items WHERE id IN ({marks})", item_ids)
-    conn.execute("DELETE FROM password_resets WHERE user_id=?", (user_id,))
-    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        marks = ",".join(["%s"] * len(item_ids))
+        cur.execute(f"DELETE FROM price_history WHERE item_id IN ({marks})", tuple(item_ids))
+        cur.execute(f"DELETE FROM items WHERE id IN ({marks})", tuple(item_ids))
+    cur.execute("DELETE FROM password_resets WHERE user_id=%s", (user_id,))
+    cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
     conn.commit()
     conn.close()
     flash("User deleted successfully.", "ok")
@@ -640,13 +701,15 @@ def admin_user_delete(user_id):
 @admin_required
 def admin_items():
     conn = db_conn()
-    rows = conn.execute("""
+    cur = conn.cursor()
+    cur.execute("""
         SELECT i.*, u.email AS user_email,
                (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
                (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text,
                (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
         FROM items i JOIN users u ON u.id=i.user_id ORDER BY i.created_at DESC
-    """).fetchall()
+    """)
+    rows = cur.fetchall()
     conn.close()
     return render_template("admin_items.html", items=rows)
 
@@ -657,10 +720,7 @@ def cron_update_all():
     if not hmac.compare_digest(token, CRON_TOKEN): return "Unauthorized", 401
     asins = list_all_items_distinct_asins()
     if not asins: return "No items", 200
-    
-    # Parallel update for cron too
-    results_by_asin = run_async(scrape_many_parallel, asins)
-    
+    results_by_asin = run_async(scrape_many_sequential_optimized, asins)
     wrote = 0
     for asin, data in results_by_asin.items():
         item_ids = list_all_item_ids_for_asin(asin)
