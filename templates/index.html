@@ -151,7 +151,7 @@
         </form>
 
         <form id="updateAllForm" method="post" action="{{ url_for('update_all') }}" style="display:flex; align-items:center;">
-            <span id="nextUpdateTimer" class="timer-badge">Next update: 04:00:00</span>
+            <span id="nextUpdateTimer" class="timer-badge">Next update: 00:05:00</span>
             <button class="btn" type="submit">Update Prices Now</button>
         </form>
       </div>
@@ -276,8 +276,8 @@ function toggleTitle(asin, btn) {
 }
 
 // --- Auto-Update Timer Logic ---
-// 4 hours in seconds
-const UPDATE_INTERVAL_SEC = 4 * 60 * 60; 
+// 5 minutes in seconds
+const UPDATE_INTERVAL_SEC = 5 * 60; 
 let secondsRemaining = UPDATE_INTERVAL_SEC;
 
 function updateTimerDisplay() {
