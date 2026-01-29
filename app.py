@@ -27,9 +27,12 @@ ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
 RESET_MODE = os.environ.get("RESET_MODE", "manual").strip().lower()
 CRON_TOKEN = os.environ.get("CRON_TOKEN", "")
 PLAYWRIGHT_LOCALE = os.environ.get("PLAYWRIGHT_LOCALE", "en-US")
-PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "12000"))
-PLAYWRIGHT_NAV_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_NAV_TIMEOUT_MS", "45000"))
+# Reduced timeouts for faster failure/retry
+PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "8000")) 
+PLAYWRIGHT_NAV_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_NAV_TIMEOUT_MS", "30000"))
 BLOCK_HEAVY_RESOURCES = os.environ.get("BLOCK_HEAVY_RESOURCES", "1") == "1"
+# Limit parallel tabs to prevent crashing Render free tier
+MAX_CONCURRENT_SCRAPES = 3 
 
 # ---------------- DB helpers ----------------
 
@@ -96,8 +99,7 @@ init_db()
 
 def current_user():
     uid = session.get("user_id")
-    if not uid:
-        return None
+    if not uid: return None
     conn = db_conn()
     u = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     conn.close()
@@ -159,7 +161,7 @@ def parse_money_value(t: str | None) -> float | None:
     if not m: return None
     return float(m.group(1).replace(",", ""))
 
-# ---------------- Playwright scraping (ASYNC) ----------------
+# ---------------- Playwright scraping (ASYNC & PARALLEL) ----------------
 
 async def pick_first_text_async(page, selectors) -> str | None:
     for sel in selectors:
@@ -171,92 +173,123 @@ async def pick_first_text_async(page, selectors) -> str | None:
         except Exception: pass
     return None
 
-async def wait_for_any_title_async(page, timeout_ms=12000) -> None:
+async def wait_for_any_title_async(page, timeout_ms=8000) -> None:
     selectors = ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"]
-    last_exc = None
     for sel in selectors:
         try:
             await page.wait_for_selector(sel, timeout=timeout_ms)
             return
-        except Exception as e: last_exc = e
-    raise last_exc or TimeoutError("Title not found")
+        except Exception: pass
+    raise TimeoutError("Title not found")
 
 async def auto_nudge_async(page) -> None:
     try:
-        await page.evaluate("window.scrollTo(0, 900)")
-        await page.wait_for_timeout(250)
-        await page.evaluate("window.scrollTo(0, 0)")
-        await page.wait_for_timeout(150)
+        await page.evaluate("window.scrollTo(0, 500)")
+        await page.wait_for_timeout(200)
     except Exception: pass
 
-async def make_browser_async():
-    p = await async_playwright().start()
-    browser = await p.chromium.launch(
-        headless=True,
-        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    )
-    context = await browser.new_context(locale=PLAYWRIGHT_LOCALE)
+async def configure_page(context):
     page = await context.new_page()
     await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
     page.set_default_timeout(PLAYWRIGHT_TIMEOUT_MS)
     page.set_default_navigation_timeout(PLAYWRIGHT_NAV_TIMEOUT_MS)
-
+    
     if BLOCK_HEAVY_RESOURCES:
         async def route_handler(route):
             try:
-                if route.request.resource_type in ("image", "media", "font"): await route.abort()
-                else: await route.continue_()
-            except Exception:
-                try: await route.continue_()
-                except Exception: pass
+                if route.request.resource_type in ("image", "media", "font", "stylesheet"):
+                    await route.abort()
+                else: 
+                    await route.continue_()
+            except Exception: pass
         await context.route("**/*", route_handler)
-    return p, browser, page
+    return page
 
-async def scrape_one_async(page, asin: str) -> dict:
+async def scrape_one_task(context, asin: str) -> dict:
+    """Scrapes a single ASIN using a fresh page from the shared context."""
+    page = await configure_page(context)
     url = canonical_url(asin)
-    await page.goto(url, wait_until="domcontentloaded")
-    try: await wait_for_any_title_async(page, timeout_ms=PLAYWRIGHT_TIMEOUT_MS)
-    except Exception:
-        await auto_nudge_async(page)
-        await wait_for_any_title_async(page, timeout_ms=PLAYWRIGHT_TIMEOUT_MS)
-    await auto_nudge_async(page)
-
-    item_name = await pick_first_text_async(page, ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"])
-    price = await pick_first_text_async(page, ["#corePriceDisplay_desktop_feature_div .a-price .a-offscreen", "#corePrice_feature_div .a-price .a-offscreen", "span.a-price > span.a-offscreen", ".a-price .a-offscreen"])
     
-    rating_text = None
-    try:
-        rating_text = await page.locator("#acrPopover").first.get_attribute("title")
-        rating_text = clean(rating_text)
-    except Exception: pass
-    if not rating_text:
-        rating_text = await pick_first_text_async(page, ["span[data-hook='rating-out-of-text']", "#acrPopover"])
-    
-    reviews_text = await pick_first_text_async(page, ["#acrCustomerReviewText", "span[data-hook='total-review-count']"])
-    
+    error_msg = None
+    item_name = None
+    price = None
+    rating = None
+    reviews_count = None
     discount_percent = None
-    discount_text = await pick_first_text_async(page, [".savingsPercentage", "#corePriceDisplay_desktop_feature_div .savingsPercentage"])
-    if discount_text:
-        m = re.search(r"(\d{1,3})\s*%", discount_text)
-        if m: discount_percent = int(m.group(1))
-    
-    if discount_percent is None:
-        list_price_text = await pick_first_text_async(page, ["#corePriceDisplay_desktop_feature_div span.a-price.a-text-price span.a-offscreen", "#corePrice_feature_div span.a-price.a-text-price span.a-offscreen", "span.a-price.a-text-price span.a-offscreen"])
-        cur = parse_money_value(price)
-        old = parse_money_value(list_price_text)
-        if cur and old and old > cur:
-            discount_percent = int(round((old - cur) / old * 100))
+
+    try:
+        await page.goto(url, wait_until="domcontentloaded")
+        
+        # Fast title check
+        try: await wait_for_any_title_async(page, timeout_ms=PLAYWRIGHT_TIMEOUT_MS)
+        except Exception:
+            await auto_nudge_async(page)
+            await wait_for_any_title_async(page, timeout_ms=PLAYWRIGHT_TIMEOUT_MS)
+
+        item_name = await pick_first_text_async(page, ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"])
+        price = await pick_first_text_async(page, ["#corePriceDisplay_desktop_feature_div .a-price .a-offscreen", "#corePrice_feature_div .a-price .a-offscreen", "span.a-price > span.a-offscreen", ".a-price .a-offscreen"])
+        
+        # Ratings/Reviews (Optional, fail silently)
+        try:
+            rating_text = await page.locator("#acrPopover").first.get_attribute("title")
+            rating = first_number(clean(rating_text))
+        except Exception: pass
+        
+        if not rating:
+            rt = await pick_first_text_async(page, ["span[data-hook='rating-out-of-text']"])
+            rating = first_number(rt)
+            
+        reviews_text = await pick_first_text_async(page, ["#acrCustomerReviewText", "span[data-hook='total-review-count']"])
+        reviews_count = first_int_like(reviews_text)
+        
+        # Discount
+        discount_text = await pick_first_text_async(page, [".savingsPercentage", "#corePriceDisplay_desktop_feature_div .savingsPercentage"])
+        if discount_text:
+            m = re.search(r"(\d{1,3})\s*%", discount_text)
+            if m: discount_percent = int(m.group(1))
+
+    except Exception as e:
+        error_msg = str(e)
+    finally:
+        await page.close()
 
     return {
         "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        "asin": asin, "url": url, "item_name": item_name, "price_text": price, "price_value": parse_money_value(price),
-        "rating": first_number(rating_text), "reviews_count": first_int_like(reviews_text), "discount_percent": discount_percent
+        "asin": asin, "url": url, 
+        "item_name": item_name, "price_text": price, "price_value": parse_money_value(price),
+        "rating": rating, "reviews_count": reviews_count, "discount_percent": discount_percent,
+        "error": error_msg
     }
+
+async def scrape_many_parallel(asins: list[str]) -> dict[str, dict]:
+    """Scrapes multiple ASINs in parallel using a semaphore to limit concurrency."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
+        context = await browser.new_context(locale=PLAYWRIGHT_LOCALE)
+        
+        # Semaphore to limit simultaneous tabs (prevent CPU overload)
+        sem = asyncio.Semaphore(MAX_CONCURRENT_SCRAPES)
+        
+        async def sem_task(asin):
+            async with sem:
+                return await scrape_one_task(context, asin)
+
+        tasks = [sem_task(asin) for asin in asins]
+        results_list = await asyncio.gather(*tasks)
+        
+        await browser.close()
+        
+        # Convert list back to dict keyed by ASIN
+        return {r["asin"]: r for r in results_list}
 
 def run_async(coro_func, *args, **kwargs):
     try: asyncio.get_running_loop(); running = True
     except RuntimeError: running = False
     if not running: return asyncio.run(coro_func(*args, **kwargs))
+    
     out = {"result": None, "error": None}
     def worker():
         try: out["result"] = asyncio.run(coro_func(*args, **kwargs))
@@ -265,24 +298,6 @@ def run_async(coro_func, *args, **kwargs):
     t.start(); t.join()
     if out["error"]: raise out["error"]
     return out["result"]
-
-async def scrape_many_asins_once_async(asins: list[str]) -> dict[str, dict]:
-    p, browser, page = await make_browser_async()
-    results = {}
-    try:
-        for asin in asins:
-            try:
-                data = await scrape_one_async(page, asin)
-                data["error"] = None
-                results[asin] = data
-            except Exception as e:
-                results[asin] = {"timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "asin": asin, "url": canonical_url(asin), "error": str(e), "item_name":None, "price_text":None, "price_value":None, "rating":None, "reviews_count":None, "discount_percent":None}
-    finally:
-        try: await browser.close()
-        except Exception: pass
-        try: await p.stop()
-        except Exception: pass
-    return results
 
 # ---------------- DB operations ----------------
 
@@ -315,6 +330,18 @@ def delete_item(user_id: int, asin: str):
     conn.close()
 
 def write_history_for_item(item_id: int, data: dict):
+    # --- LOGIC TO SKIP DUPLICATES ---
+    latest = get_latest_history_for_item(item_id)
+    new_price = data.get("price_value")
+    
+    if latest:
+        old_price = latest["price_value"]
+        # If new price is None (error/out of stock), we might still want to record it to show error
+        # But if both are valid numbers and equal, skip.
+        if new_price is not None and old_price is not None and new_price == old_price:
+             # Prices are exactly the same, do not record to DB
+             return
+             
     conn = db_conn()
     conn.execute("INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, rating, reviews_count, discount_percent, error) VALUES(?,?,?,?,?,?,?,?,?)", 
                  (item_id, data.get("timestamp"), data.get("item_name"), data.get("price_text"), data.get("price_value"), data.get("rating"), data.get("reviews_count"), data.get("discount_percent"), data.get("error")))
@@ -506,10 +533,14 @@ def update_all():
     asins = [it["asin"] for it in items]
     if not asins:
         flash("No items to update.", "error"); return redirect(url_for("index"))
-    results_by_asin = run_async(scrape_many_asins_once_async, asins)
+    
+    # Use the PARALLEL scraper now
+    results_by_asin = run_async(scrape_many_parallel, asins)
+    
     for it in items:
         data = results_by_asin.get(it["asin"])
         if data: write_history_for_item(it["id"], data)
+    
     flash("Updated all your items.", "ok"); return redirect(url_for("index"))
 
 @app.route("/update/<asin>", methods=["POST"])
@@ -518,7 +549,10 @@ def update_one(asin):
     u = current_user()
     item_id = get_item_id(u["id"], asin)
     if not item_id: abort(404)
-    results_by_asin = run_async(scrape_many_asins_once_async, [asin])
+    
+    # Use parallel scraper even for one item (reuses code)
+    results_by_asin = run_async(scrape_many_parallel, [asin])
+    
     data = results_by_asin.get(asin)
     if data: write_history_for_item(item_id, data)
     flash("Item updated.", "ok"); return redirect(url_for("index"))
@@ -623,14 +657,17 @@ def cron_update_all():
     if not hmac.compare_digest(token, CRON_TOKEN): return "Unauthorized", 401
     asins = list_all_items_distinct_asins()
     if not asins: return "No items", 200
-    results_by_asin = run_async(scrape_many_asins_once_async, asins)
+    
+    # Parallel update for cron too
+    results_by_asin = run_async(scrape_many_parallel, asins)
+    
     wrote = 0
     for asin, data in results_by_asin.items():
         item_ids = list_all_item_ids_for_asin(asin)
         for item_id in item_ids:
             write_history_for_item(item_id, data)
             wrote += 1
-    return f"OK wrote {wrote} history rows", 200
+    return f"OK checked items. Wrote {wrote} changes.", 200
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
