@@ -713,8 +713,13 @@ def admin_items():
     conn.close()
     return render_template("admin_items.html", items=rows)
 
-@app.route("/cron/update-all", methods=["GET"])
+@app.route("/cron/update-all", methods=["GET", "POST", "HEAD"])
 def cron_update_all():
+
+    # If UptimeRobot sends HEAD, just return OK
+    if request.method == "HEAD":
+        return "", 200
+
     asins = list_all_items_distinct_asins()
     if not asins:
         return "No items", 200
@@ -729,6 +734,7 @@ def cron_update_all():
             wrote += 1
 
     return f"OK wrote {wrote} history rows", 200
+
 
 
 if __name__ == "__main__":
