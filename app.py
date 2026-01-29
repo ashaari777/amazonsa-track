@@ -713,21 +713,23 @@ def admin_items():
     conn.close()
     return render_template("admin_items.html", items=rows)
 
-@app.route("/cron/update-all", methods=["POST"])
+@app.route("/cron/update-all", methods=["GET"])
 def cron_update_all():
-    if not CRON_TOKEN: return "CRON_TOKEN not set", 400
-    token = request.headers.get("X-CRON-TOKEN") or request.args.get("token") or ""
-    if not hmac.compare_digest(token, CRON_TOKEN): return "Unauthorized", 401
     asins = list_all_items_distinct_asins()
-    if not asins: return "No items", 200
-    results_by_asin = run_async(scrape_many_sequential_optimized, asins)
+    if not asins:
+        return "No items", 200
+
+    results_by_asin = run_async(scrape_many_asins_once_async, asins)
+
     wrote = 0
     for asin, data in results_by_asin.items():
         item_ids = list_all_item_ids_for_asin(asin)
         for item_id in item_ids:
             write_history_for_item(item_id, data)
             wrote += 1
-    return f"OK checked items. Wrote {wrote} changes.", 200
+
+    return f"OK wrote {wrote} history rows", 200
+
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
