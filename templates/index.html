@@ -110,16 +110,19 @@
 
     canvas { width: 100% !important; height: auto !important; max-height: 200px; margin-top: 10px; }
     
-    .timer-badge { font-family: monospace; font-size: 0.9em; background: #edf2f7; padding: 6px 10px; border-radius: 6px; color: #4a5568; margin-right: 10px; border: 1px solid #e2e8f0; }
+    .status-badge { font-size: 0.85em; background: #37475a; padding: 4px 10px; border-radius: 4px; }
   </style>
 </head>
 <body>
   <div class="topbar">
     <div style="display:flex; align-items:center; gap:15px;">
       <strong>Amazon.sa Tracker</strong>
-      <span style="opacity:.6; font-size: 0.85em;">{{ user["email"] }}</span>
+      <!-- Show Last Global Update here -->
+      <span class="status-badge">Last Update: {{ last_global_update }}</span>
     </div>
-    <div>
+    
+    <div style="display:flex; align-items:center; gap:15px;">
+      <span style="opacity:.6; font-size: 0.85em;">{{ user["email"] }}</span>
       {% if is_admin %}
         <a href="{{ url_for('admin_users') }}">Users</a>
         <a href="{{ url_for('admin_items') }}">Items</a>
@@ -149,11 +152,8 @@
           <input name="item" placeholder="Paste ASIN or Amazon.sa URL" required />
           <button class="btn" type="submit">Add</button>
         </form>
-
-        <form id="updateAllForm" method="post" action="{{ url_for('update_all') }}" style="display:flex; align-items:center;">
-            <span id="nextUpdateTimer" class="timer-badge">Next update: 00:05:00</span>
-            <button class="btn" type="submit">Update Prices Now</button>
-        </form>
+        
+        <!-- REMOVED MANUAL UPDATE BUTTON -->
       </div>
     </div>
 
@@ -182,7 +182,7 @@
                 <span class="discount-badge">-{{ it.latest_discount }}%</span>
               {% endif %}
               <div class="meta">
-                Last: {{ it.latest_ts.split(' ')[1] if it.latest_ts else "Never" }}
+                Last checked: {{ it.latest_ts.split(' ')[1] if it.latest_ts else "Never" }}
               </div>
             </div>
 
@@ -193,6 +193,7 @@
 
             <!-- 4. Actions -->
             <div class="card-actions">
+              <!-- Kept individual update in case you really need to check one item now -->
               <form method="post" action="{{ url_for('update_one', asin=it.asin) }}">
                 <button class="btn2" type="submit">Refresh</button>
               </form>
@@ -216,7 +217,7 @@ async function loadHistory(asin) {
 function buildChart(canvasId, points) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   
-  // Only show time (HH:MM) on X axis to save space
+  // Only show time (HH:MM) on X axis
   const labels = points.map(p => {
       if(!p.ts) return "";
       return p.ts.substring(5, 16).replace("-", "/"); 
@@ -244,7 +245,7 @@ function buildChart(canvasId, points) {
       maintainAspectRatio: false,
       plugins: { legend: { display: false }, tooltip: { intersect: false, mode: 'index' } },
       scales: {
-        x: { display: false }, // Hide X axis labels to look cleaner like the screenshot
+        x: { display: false },
         y: { display: true, position: 'right', grid: { borderDash: [2, 4] } }
       }
     }
@@ -274,31 +275,6 @@ function toggleTitle(asin, btn) {
         btn.textContent = "More";
     }
 }
-
-// --- Auto-Update Timer Logic ---
-// 5 minutes in seconds
-const UPDATE_INTERVAL_SEC = 5 * 60; 
-let secondsRemaining = UPDATE_INTERVAL_SEC;
-
-function updateTimerDisplay() {
-    const h = Math.floor(secondsRemaining / 3600).toString().padStart(2, '0');
-    const m = Math.floor((secondsRemaining % 3600) / 60).toString().padStart(2, '0');
-    const s = (secondsRemaining % 60).toString().padStart(2, '0');
-    
-    document.getElementById('nextUpdateTimer').textContent = `Next update: ${h}:${m}:${s}`;
-    
-    if (secondsRemaining <= 0) {
-        // Trigger the update
-        document.getElementById('updateAllForm').submit();
-    } else {
-        secondsRemaining--;
-        setTimeout(updateTimerDisplay, 1000);
-    }
-}
-
-// Start the timer
-updateTimerDisplay();
-
 </script>
 </body>
 </html>
