@@ -582,10 +582,25 @@ def index():
         session.clear()
         return redirect(url_for("login"))
         
-    items = get_user_items(u["id"])
+    conn = db_conn()
+    cur = conn.cursor()
+    
+    # 1. Get User Items
+    cur.execute("SELECT * FROM items WHERE user_id=%s ORDER BY created_at DESC", (u["id"],))
+    items = cur.fetchall()
+    
+    # 2. Get the global "Last Update" time (latest timestamp in the whole history)
+    # We look at ANY item's history to see when the cron job last ran successfully.
+    cur.execute("SELECT MAX(ts) as last_run FROM price_history")
+    last_run_row = cur.fetchone()
+    last_global_update = last_run_row['last_run'] if last_run_row and last_run_row['last_run'] else "Pending..."
+
     enriched = []
     for it in items:
-        latest = get_latest_history_for_item(it["id"])
+        # Get latest history for specific item
+        cur.execute("SELECT * FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1", (it["id"],))
+        latest = cur.fetchone()
+        
         enriched.append({
             "id": it["id"], "asin": it["asin"], "url": it["url"], "created_at": it["created_at"],
             "latest_name": latest["item_name"] if latest and latest["item_name"] else None,
@@ -593,7 +608,16 @@ def index():
             "latest_discount": latest["discount_percent"] if latest else None,
             "latest_ts": latest["ts"] if latest else None,
         })
-    return render_template("index.html", user=u, items=enriched, is_admin=(session.get("role") == "admin"))
+    
+    conn.close()
+    
+    return render_template(
+        "index.html", 
+        user=u, 
+        items=enriched, 
+        is_admin=(session.get("role") == "admin"),
+        last_global_update=last_global_update
+    )
 
 @app.route("/add", methods=["POST"])
 @login_required
