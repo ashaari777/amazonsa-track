@@ -3,129 +3,51 @@
 <head>
   <meta charset="utf-8" />
   <title>Amazon.sa Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f5f7fa; color: #333; }
-    
-    /* Topbar */
-    .topbar { background: #232f3e; color: #fff; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
-    .topbar a { color: #ddd; text-decoration: none; margin-right: 15px; font-size: 0.9em; transition: color 0.2s; }
-    .topbar a:hover { color: #fff; }
-    
-    /* Full width container for 5 items */
+    .topbar { background: #232f3e; color: #fff; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+    .topbar a { color: #ddd; text-decoration: none; margin-right: 15px; font-size: 0.9em; }
+    .status-badge { font-size: 0.85em; background: #37475a; padding: 4px 10px; border-radius: 4px; }
     .container { max-width: 98%; margin: 24px auto; padding: 0 10px; }
-    
     .panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 24px; }
-    
-    /* Messages */
     .msg { padding: 12px; border-radius: 6px; margin: 10px 0; font-size: 0.95em; }
     .ok { background: #e6fffa; border: 1px solid #b2f5ea; color: #2c7a7b; }
     .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; }
-
-    /* Inputs & Buttons */
-    .toolbar { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; justify-content: space-between; }
-    .add-row { display: flex; gap: 10px; flex: 1; max-width: 600px; }
-    .add-row input { flex: 1; padding: 10px 14px; border: 1px solid #cbd5e0; border-radius: 6px; outline: none; transition: border 0.2s; }
-    .add-row input:focus { border-color: #232f3e; }
     
-    .btn { padding: 10px 18px; border: 0; border-radius: 6px; background: #232f3e; color: #fff; font-weight: 600; cursor: pointer; transition: background 0.2s; font-size: 0.9em; }
-    .btn:hover { background: #37475a; }
-    
-    .btn2 { padding: 8px 14px; border: 1px solid #cbd5e0; border-radius: 6px; background: #fff; color: #4a5568; font-weight: 600; cursor: pointer; font-size: 0.85em; transition: all 0.2s; }
-    .btn2:hover { background: #f7fafc; border-color: #a0aec0; color: #2d3748; }
+    .add-row { display: flex; gap: 10px; max-width: 600px; width: 100%; }
+    .add-row input { flex: 1; padding: 10px 14px; border: 1px solid #cbd5e0; border-radius: 6px; outline: none; }
+    .btn { padding: 10px 18px; border: 0; border-radius: 6px; background: #232f3e; color: #fff; font-weight: 600; cursor: pointer; }
+    .btn2 { padding: 8px 14px; border: 1px solid #cbd5e0; border-radius: 6px; background: #fff; color: #4a5568; font-weight: 600; cursor: pointer; }
     .btn-del { color: #e53e3e; border-color: #feb2b2; }
-    .btn-del:hover { background: #fff5f5; border-color: #fc8181; color: #c53030; }
 
-    /* --- GRID SYSTEM FOR 5 COLUMNS --- */
-    .charts-row {
-      display: grid;
-      /* Default: 5 columns */
-      grid-template-columns: repeat(5, 1fr); 
-      gap: 16px;
-    }
-
-    /* Responsive Breakpoints */
-    @media (max-width: 1800px) { .charts-row { grid-template-columns: repeat(4, 1fr); } }
-    @media (max-width: 1400px) { .charts-row { grid-template-columns: repeat(3, 1fr); } }
-    @media (max-width: 950px)  { .charts-row { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 600px)  { .charts-row { grid-template-columns: 1fr; } }
-
-    .card {
-      background: #fff;
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      height: 100%; /* Make cards equal height */
-    }
-
-    /* --- TITLE TRUNCATION --- */
+    /* Responsive Grid */
+    .charts-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 16px; }
+    
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 16px; display: flex; flex-direction: column; }
     .title-area { margin-bottom: 8px; min-height: 44px; }
-    
-    .title-text {
-      font-weight: 700;
-      font-size: 0.95em;
-      line-height: 1.4;
-      color: #2d3748;
-    }
-
-    /* State 1: Truncated (One line) */
-    .title-text.truncated {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      display: block;
-    }
-
-    /* State 2: Expanded */
-    .title-text.expanded {
-      white-space: normal;
-    }
-
-    .more-link {
-      font-size: 0.8em;
-      color: #3182ce;
-      cursor: pointer;
-      background: none;
-      border: none;
-      padding: 0;
-      margin-top: 2px;
-      text-decoration: underline;
-    }
-    .more-link:hover { color: #2c5282; }
-
-    /* Price & Info */
+    .title-text { font-weight: 700; font-size: 0.95em; color: #2d3748; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .title-text.expanded { white-space: normal; }
+    .more-link { font-size: 0.8em; color: #3182ce; cursor: pointer; background: none; border: none; padding: 0; text-decoration: underline; }
     .price-tag { font-size: 1.1em; font-weight: 800; color: #1a202c; }
-    .discount-badge { background: #c53030; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.75em; font-weight: bold; vertical-align: middle; margin-left: 6px; }
+    .discount-badge { background: #c53030; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.75em; font-weight: bold; margin-left: 6px; }
     .meta { font-size: 0.8em; color: #718096; margin-top: 4px; }
-
-    .card-actions {
-      margin-top: auto; /* Pushes buttons to bottom of card */
-      padding-top: 12px;
-      display: flex;
-      justify-content: space-between;
-      border-top: 1px solid #edf2f7;
-    }
-
-    canvas { width: 100% !important; height: auto !important; max-height: 200px; margin-top: 10px; }
     
-    .status-badge { font-size: 0.85em; background: #37475a; padding: 4px 10px; border-radius: 4px; }
+    .chart-container { position: relative; height: 250px; width: 100%; margin-top: 15px; }
+    .card-actions { margin-top: auto; padding-top: 12px; display: flex; justify-content: space-between; border-top: 1px solid #edf2f7; }
   </style>
 </head>
 <body>
   <div class="topbar">
-    <div style="display:flex; align-items:center; gap:15px;">
+    <div style="display:flex; align-items:center; gap:10px;">
       <strong>Amazon.sa Tracker</strong>
-      <!-- Show Last Global Update here -->
       <span class="status-badge">Last Update: {{ last_global_update }}</span>
     </div>
-    
-    <div style="display:flex; align-items:center; gap:15px;">
+    <div style="display:flex; align-items:center; gap:10px;">
       <span style="opacity:.6; font-size: 0.85em;">{{ user["email"] }}</span>
       {% if is_admin %}
         <a href="{{ url_for('admin_users') }}">Users</a>
-        <a href="{{ url_for('admin_items') }}">Items</a>
       {% endif %}
       <form method="post" action="{{ url_for('logout') }}" style="display:inline">
         <button class="btn2" style="background:transparent; border-color:#4a5568; color:#fff;" type="submit">Logout</button>
@@ -145,59 +67,44 @@
     {% endwith %}
 
     <div class="panel">
-      <div class="toolbar">
-        <h3 style="margin:0; margin-right: 20px;">Add Item</h3>
-        
-        <form method="post" action="{{ url_for('add') }}" class="add-row">
-          <input name="item" placeholder="Paste ASIN or Amazon.sa URL" required />
-          <button class="btn" type="submit">Add</button>
-        </form>
-        
-        <!-- REMOVED MANUAL UPDATE BUTTON -->
-      </div>
+      <h3 style="margin:0 0 15px 0;">Add Item</h3>
+      <form method="post" action="{{ url_for('add') }}" class="add-row">
+        <input name="item" placeholder="Paste ASIN or Amazon.sa URL" required />
+        <button class="btn" type="submit">Add</button>
+      </form>
     </div>
 
     {% if not items %}
-      <div class="panel" style="text-align:center; padding: 50px; color: #718096;">
-        <h2>No items yet</h2>
-        <p>Paste an Amazon.sa URL above to get started.</p>
+      <div class="panel" style="text-align:center; padding: 50px;">
+        <p>No items yet. Paste an Amazon.sa URL above to get started.</p>
       </div>
     {% else %}
       <div class="charts-row">
         {% for it in items %}
           <div class="card">
-            
-            <!-- 1. Title with "More" toggle -->
             <div class="title-area">
-              <a href="{{ it.url }}" target="_blank" class="title-text truncated" id="title-text-{{ it.asin }}" style="text-decoration:none; color:#2d3748;">
+              <a href="{{ it.url }}" target="_blank" class="title-text truncated" id="title-text-{{ it.asin }}" style="text-decoration:none;">
                 {{ it.latest_name if it.latest_name else it.asin }}
               </a>
               <button class="more-link" onclick="toggleTitle('{{ it.asin }}', this)">More</button>
             </div>
-
-            <!-- 2. Price Info -->
             <div>
               <span class="price-tag">{{ it.latest_price_text if it.latest_price_text else "Pending..." }}</span>
               {% if it.latest_discount is not none %}
                 <span class="discount-badge">-{{ it.latest_discount }}%</span>
               {% endif %}
-              <div class="meta">
-                Last checked: {{ it.latest_ts.split(' ')[1] if it.latest_ts else "Never" }}
-              </div>
+              <div class="meta">Last check: {{ it.latest_ts.split(' ')[1] if it.latest_ts else "-" }}</div>
             </div>
-
-            <!-- 3. Chart -->
-            <div style="flex:1; min-height: 150px; display:flex; align-items:flex-end;">
+            
+            <div class="chart-container">
                 <canvas id="chart-{{ it.asin }}"></canvas>
             </div>
 
-            <!-- 4. Actions -->
             <div class="card-actions">
-              <!-- Kept individual update in case you really need to check one item now -->
               <form method="post" action="{{ url_for('update_one', asin=it.asin) }}">
                 <button class="btn2" type="submit">Refresh</button>
               </form>
-              <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Delete this item?');">
+              <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Delete?');">
                 <button class="btn2 btn-del" type="submit">Delete</button>
               </form>
             </div>
@@ -208,7 +115,6 @@
   </div>
 
 <script>
-// --- Chart JS Logic ---
 async function loadHistory(asin) {
   const r = await fetch(`/history/${asin}.json`);
   return await r.json();
@@ -217,36 +123,45 @@ async function loadHistory(asin) {
 function buildChart(canvasId, points) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   
-  // Only show time (HH:MM) on X axis
-  const labels = points.map(p => {
-      if(!p.ts) return "";
-      return p.ts.substring(5, 16).replace("-", "/"); 
-  });
-  
-  const prices = points.map(p => (p.price_value === null ? null : p.price_value));
+  // Filter out null prices to calculate Min/Max for prettier scales
+  const validPrices = points.filter(p => p.price_value !== null).map(p => p.price_value);
+  const minPrice = validPrices.length ? Math.min(...validPrices) * 0.9 : 0;
+  const maxPrice = validPrices.length ? Math.max(...validPrices) * 1.1 : 100;
+
+  const labels = points.map(p => p.ts ? p.ts.substring(5, 16) : "");
+  const prices = points.map(p => p.price_value);
 
   new Chart(ctx, {
     type: 'line',
     data: {
       labels: labels,
       datasets: [{
+        label: 'Price',
         data: prices,
-        borderColor: '#232f3e',
-        backgroundColor: 'rgba(35, 47, 62, 0.05)',
+        borderColor: '#06b6d4', // Cyan color
+        backgroundColor: 'rgba(6, 182, 212, 0.15)', // Light Cyan fill
         borderWidth: 2,
-        pointRadius: 0, 
-        pointHoverRadius: 4,
-        tension: 0.3,
-        fill: true
+        pointBackgroundColor: '#fff',
+        pointBorderColor: '#06b6d4',
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        fill: true,
+        tension: 0.4, // Smooth curve
+        spanGaps: true // Fixes broken lines
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { intersect: false, mode: 'index' } },
+      plugins: { legend: { display: false } },
       scales: {
         x: { display: false },
-        y: { display: true, position: 'right', grid: { borderDash: [2, 4] } }
+        y: { 
+            display: true, 
+            min: Math.floor(minPrice),
+            max: Math.ceil(maxPrice),
+            grid: { color: '#f0f0f0' }
+        }
       }
     }
   });
@@ -262,17 +177,14 @@ function buildChart(canvasId, points) {
   }
 })();
 
-// --- Title Toggle Logic ---
 function toggleTitle(asin, btn) {
     const el = document.getElementById('title-text-' + asin);
-    if (el.classList.contains('truncated')) {
-        el.classList.remove('truncated');
+    if (el.classList.contains('expanded')) {
+        el.classList.remove('expanded');
+        btn.textContent = "More";
+    } else {
         el.classList.add('expanded');
         btn.textContent = "Less";
-    } else {
-        el.classList.remove('expanded');
-        el.classList.add('truncated');
-        btn.textContent = "More";
     }
 }
 </script>
