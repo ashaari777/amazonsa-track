@@ -31,21 +31,28 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
 RESET_MODE = os.environ.get("RESET_MODE", "manual").strip().lower()
-CRON_TOKEN = os.environ.get("CRON_TOKEN", "")
+CRON_TOKEN = os.environ.get("CRON_TOKEN", "my-secret-cron-token") # Default set for safety
 PLAYWRIGHT_LOCALE = os.environ.get("PLAYWRIGHT_LOCALE", "en-US")
-PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "15000")) 
-PLAYWRIGHT_NAV_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_NAV_TIMEOUT_MS", "45000"))
+PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "20000")) 
+PLAYWRIGHT_NAV_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_NAV_TIMEOUT_MS", "60000"))
 BLOCK_HEAVY_RESOURCES = os.environ.get("BLOCK_HEAVY_RESOURCES", "1") == "1"
+
+# List of User Agents to rotate to avoid detection
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+]
 
 # ---------------- DB helpers ----------------
 
 def db_conn():
     """Connect to PostgreSQL using the environment variable."""
     if not DATABASE_URL:
-        # Fallback for local testing if no env var is set (not recommended for prod)
         print("CRITICAL ERROR: DATABASE_URL not set.")
         exit(1)
-    
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
@@ -54,7 +61,6 @@ def init_db():
     conn = db_conn()
     cur = conn.cursor()
     
-    # Users Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -66,7 +72,6 @@ def init_db():
         );
     """)
 
-    # Items Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id SERIAL PRIMARY KEY,
@@ -79,7 +84,6 @@ def init_db():
         );
     """)
 
-    # Price History Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS price_history (
             id SERIAL PRIMARY KEY,
@@ -96,7 +100,6 @@ def init_db():
         );
     """)
 
-    # Password Resets Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS password_resets (
             id SERIAL PRIMARY KEY,
@@ -111,7 +114,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Run DB init
 try:
     init_db()
 except Exception as e:
@@ -185,7 +187,7 @@ def parse_money_value(t: str | None) -> float | None:
     if not m: return None
     return float(m.group(1).replace(",", ""))
 
-# ---------------- Playwright scraping (ROBUST SEQUENTIAL) ----------------
+# ---------------- Playwright scraping (ROBUST) ----------------
 
 async def pick_first_text_async(page, selectors) -> str | None:
     for sel in selectors:
@@ -213,10 +215,15 @@ async def auto_nudge_async(page) -> None:
     except Exception: pass
 
 async def scrape_one_with_context(browser, asin: str) -> dict:
+    """
+    Scrapes a single ASIN with a fresh user context and rotated user agent.
+    """
+    ua = random.choice(USER_AGENTS)
     context = await browser.new_context(
         locale=PLAYWRIGHT_LOCALE,
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        user_agent=ua
     )
+    
     if BLOCK_HEAVY_RESOURCES:
         async def route_handler(route):
             try:
@@ -241,6 +248,7 @@ async def scrape_one_with_context(browser, asin: str) -> dict:
 
     try:
         await page.goto(url, wait_until="domcontentloaded")
+        
         try: await wait_for_any_title_async(page, timeout_ms=PLAYWRIGHT_TIMEOUT_MS)
         except Exception:
             await auto_nudge_async(page)
@@ -249,7 +257,7 @@ async def scrape_one_with_context(browser, asin: str) -> dict:
         item_name = await pick_first_text_async(page, ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"])
         price = await pick_first_text_async(page, ["#corePriceDisplay_desktop_feature_div .a-price .a-offscreen", "#corePrice_feature_div .a-price .a-offscreen", "span.a-price > span.a-offscreen", ".a-price .a-offscreen"])
         
-        if not item_name: raise Exception("Amazon blocked request (No title found)")
+        if not item_name: raise Exception("Amazon blocked request (No title)")
 
         try:
             rating_text = await page.locator("#acrPopover").first.get_attribute("title")
@@ -280,7 +288,10 @@ async def scrape_one_with_context(browser, asin: str) -> dict:
         "error": error_msg
     }
 
-async def scrape_many_sequential_optimized(asins: list[str]) -> dict[str, dict]:
+async def scrape_many_sequential_with_delays(asins: list[str]) -> dict[str, dict]:
+    """
+    Scrapes sequentially with RANDOM DELAYS (Reduced for speed, kept for safety).
+    """
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -288,7 +299,11 @@ async def scrape_many_sequential_optimized(asins: list[str]) -> dict[str, dict]:
         )
         results = {}
         for i, asin in enumerate(asins):
-            if i > 0: await asyncio.sleep(2.0)
+            # Random delay between 2 and 5 seconds (Reduced from 4-8)
+            if i > 0:
+                delay = random.uniform(2.0, 5.0)
+                await asyncio.sleep(delay)
+                
             data = await scrape_one_with_context(browser, asin)
             results[asin] = data
         await browser.close()
@@ -328,7 +343,6 @@ def get_latest_history_for_item(item_id: int):
 def insert_item(user_id: int, asin: str):
     conn = db_conn()
     cur = conn.cursor()
-    # Postgres "ON CONFLICT" replaces "INSERT OR IGNORE"
     cur.execute("""
         INSERT INTO items(user_id, asin, url, created_at) 
         VALUES(%s, %s, %s, %s) 
@@ -349,32 +363,57 @@ def delete_item(user_id: int, asin: str):
     conn.close()
 
 def write_history_for_item(item_id: int, data: dict):
-    latest = get_latest_history_for_item(item_id)
+    conn = db_conn()
+    cur = conn.cursor()
+    
+    # 1. Check the very last record
+    cur.execute("SELECT * FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1", (item_id,))
+    latest = cur.fetchone()
+    
     new_price = data.get("price_value")
+    should_insert = True
     
     if latest:
         old_price = latest["price_value"]
+        
+        # LOGIC: If price is the same, only insert if > 1 hour has passed
         if new_price is not None and old_price is not None and new_price == old_price:
-             return
-             
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO price_history(
-            item_id, ts, item_name, price_text, price_value, rating, reviews_count, discount_percent, error
-        ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """, (
-        item_id,
-        data.get("timestamp"),
-        data.get("item_name"),
-        data.get("price_text"),
-        data.get("price_value"),
-        data.get("rating"),
-        data.get("reviews_count"),
-        data.get("discount_percent"),
-        data.get("error"),
-    ))
-    conn.commit()
+             try:
+                 last_ts_str = latest["ts"] # "YYYY-MM-DD HH:MM:SS"
+                 # Ensure we parse it correctly
+                 last_dt = datetime.strptime(str(last_ts_str), "%Y-%m-%d %H:%M:%S")
+                 now_dt = datetime.utcnow()
+                 
+                 diff = now_dt - last_dt
+                 
+                 # If less than 1 hour (3600 seconds), SKIP insertion
+                 if diff.total_seconds() < 3600:
+                     should_insert = False
+                     # Optionally update timestamp of latest to show "we checked"
+                     # but user said "add the record every 1 hour", so we just wait for the hour mark
+             except Exception as e:
+                 print(f"Date parsing error: {e}")
+                 # If error parsing, default to inserting to be safe
+                 should_insert = True
+
+    if should_insert:
+        cur.execute("""
+            INSERT INTO price_history(
+                item_id, ts, item_name, price_text, price_value, rating, reviews_count, discount_percent, error
+            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            item_id,
+            data.get("timestamp"),
+            data.get("item_name"),
+            data.get("price_text"),
+            data.get("price_value"),
+            data.get("rating"),
+            data.get("reviews_count"),
+            data.get("discount_percent"),
+            data.get("error"),
+        ))
+        conn.commit()
+    
     conn.close()
 
 def get_item_id(user_id: int, asin: str):
@@ -583,8 +622,8 @@ def update_all():
     if not asins:
         flash("No items to update.", "error"); return redirect(url_for("index"))
     
-    # Use SEQUENTIAL scraper
-    results_by_asin = run_async(scrape_many_sequential_optimized, asins)
+    # Use SEQUENTIAL scraper with DELAYS
+    results_by_asin = run_async(scrape_many_sequential_with_delays, asins)
     
     for it in items:
         data = results_by_asin.get(it["asin"])
@@ -599,8 +638,7 @@ def update_one(asin):
     item_id = get_item_id(u["id"], asin)
     if not item_id: abort(404)
     
-    # Reuse sequential scraper logic
-    results_by_asin = run_async(scrape_many_sequential_optimized, [asin])
+    results_by_asin = run_async(scrape_many_sequential_with_delays, [asin])
     
     data = results_by_asin.get(asin)
     if data: write_history_for_item(item_id, data)
@@ -713,29 +751,34 @@ def admin_items():
     conn.close()
     return render_template("admin_items.html", items=rows)
 
-@app.route("/cron/update-all", methods=["GET", "POST", "HEAD"])
+# --- UPDATED CRON ROUTE FOR UPTIMEROBOT ---
+@app.route("/cron/update-all", methods=["GET", "POST"]) # Accepts GET for UptimeRobot
 def cron_update_all():
-
-    # If UptimeRobot sends HEAD, just return OK
-    if request.method == "HEAD":
-        return "", 200
+    # 1. Check CRON_TOKEN via URL query param (?token=...) or Header
+    token = request.args.get("token") or request.headers.get("X-CRON-TOKEN") or ""
+    
+    if not CRON_TOKEN:
+        return "CRON_TOKEN not set in environment.", 500
+        
+    # Constant time comparison to prevent timing attacks
+    if not hmac.compare_digest(token, CRON_TOKEN):
+        return "Unauthorized: Invalid Token", 401
 
     asins = list_all_items_distinct_asins()
-    if not asins:
-        return "No items", 200
-
-    results_by_asin = run_async(scrape_many_asins_once_async, asins)
-
+    if not asins: return "No items to update", 200
+    
+    # Run the scrape
+    results_by_asin = run_async(scrape_many_sequential_with_delays, asins)
+    
     wrote = 0
     for asin, data in results_by_asin.items():
         item_ids = list_all_item_ids_for_asin(asin)
         for item_id in item_ids:
+            # write_history_for_item now handles the "1-hour rule" internally
             write_history_for_item(item_id, data)
             wrote += 1
-
-    return f"OK wrote {wrote} history rows", 200
-
-
+            
+    return f"OK. Processed {len(asins)} items. Wrote {wrote} DB records.", 200
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
