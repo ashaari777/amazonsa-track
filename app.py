@@ -31,7 +31,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
 RESET_MODE = os.environ.get("RESET_MODE", "manual").strip().lower()
-CRON_TOKEN = os.environ.get("CRON_TOKEN", "my-secret-cron-token") # Default set for safety
+CRON_TOKEN = os.environ.get("CRON_TOKEN", "")
 PLAYWRIGHT_LOCALE = os.environ.get("PLAYWRIGHT_LOCALE", "en-US")
 PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "20000")) 
 PLAYWRIGHT_NAV_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_NAV_TIMEOUT_MS", "60000"))
@@ -41,7 +41,6 @@ BLOCK_HEAVY_RESOURCES = os.environ.get("BLOCK_HEAVY_RESOURCES", "1") == "1"
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
 ]
@@ -299,7 +298,7 @@ async def scrape_many_sequential_with_delays(asins: list[str]) -> dict[str, dict
         )
         results = {}
         for i, asin in enumerate(asins):
-            # Random delay between 2 and 5 seconds (Reduced from 4-8)
+            # Random delay between 2 and 5 seconds to act human
             if i > 0:
                 delay = random.uniform(2.0, 5.0)
                 await asyncio.sleep(delay)
@@ -376,24 +375,29 @@ def write_history_for_item(item_id: int, data: dict):
     if latest:
         old_price = latest["price_value"]
         
-        # LOGIC: If price is the same, only insert if > 1 hour has passed
+        # LOGIC: If price is the same...
         if new_price is not None and old_price is not None and new_price == old_price:
              try:
-                 last_ts_str = latest["ts"] # "YYYY-MM-DD HH:MM:SS"
-                 # Ensure we parse it correctly
+                 last_ts_str = latest["ts"]
+                 # Parse existing timestamp
                  last_dt = datetime.strptime(str(last_ts_str), "%Y-%m-%d %H:%M:%S")
                  now_dt = datetime.utcnow()
-                 
                  diff = now_dt - last_dt
                  
-                 # If less than 1 hour (3600 seconds), SKIP insertion
+                 # If less than 1 hour (3600 seconds)
                  if diff.total_seconds() < 3600:
+                     # DO NOT INSERT NEW ROW
                      should_insert = False
-                     # Optionally update timestamp of latest to show "we checked"
-                     # but user said "add the record every 1 hour", so we just wait for the hour mark
+                     
+                     # CRITICAL FIX: Update the TIMESTAMP of the existing row.
+                     # This tells the UI "We checked, it's still alive" without making a new dot.
+                     cur.execute("UPDATE price_history SET ts=%s WHERE id=%s", 
+                                (data.get("timestamp"), latest["id"]))
+                     conn.commit()
+                     conn.close()
+                     return
              except Exception as e:
                  print(f"Date parsing error: {e}")
-                 # If error parsing, default to inserting to be safe
                  should_insert = True
 
     if should_insert:
@@ -589,8 +593,7 @@ def index():
     cur.execute("SELECT * FROM items WHERE user_id=%s ORDER BY created_at DESC", (u["id"],))
     items = cur.fetchall()
     
-    # 2. Get the global "Last Update" time (latest timestamp in the whole history)
-    # We look at ANY item's history to see when the cron job last ran successfully.
+    # 2. Get Last Global Update Time
     cur.execute("SELECT MAX(ts) as last_run FROM price_history")
     last_run_row = cur.fetchone()
     last_global_update = last_run_row['last_run'] if last_run_row and last_run_row['last_run'] else "Pending..."
@@ -646,7 +649,6 @@ def update_all():
     if not asins:
         flash("No items to update.", "error"); return redirect(url_for("index"))
     
-    # Use SEQUENTIAL scraper with DELAYS
     results_by_asin = run_async(scrape_many_sequential_with_delays, asins)
     
     for it in items:
@@ -775,23 +777,19 @@ def admin_items():
     conn.close()
     return render_template("admin_items.html", items=rows)
 
-# --- UPDATED CRON ROUTE FOR UPTIMEROBOT ---
-@app.route("/cron/update-all", methods=["GET", "POST", "HEAD"]) # Added HEAD
+# --- UPDATED CRON ROUTE (ALLOWS HEAD REQUESTS) ---
+@app.route("/cron/update-all", methods=["GET", "POST", "HEAD"]) 
 def cron_update_all():
-    # 1. Check CRON_TOKEN via URL query param or Header
     token = request.args.get("token") or request.headers.get("X-CRON-TOKEN") or ""
     
     if not CRON_TOKEN:
         return "CRON_TOKEN not set in environment.", 500
         
-    # Constant time comparison
     if not hmac.compare_digest(token, CRON_TOKEN):
         return "Unauthorized: Invalid Token", 401
 
-    # For HEAD requests (UptimeRobot), just return 200 OK if token is valid
-    # We don't want to trigger the heavy scraping on a HEAD check, just keep awake.
-    if request.method == "HEAD":
-        return "OK", 200
+    # NOTE: REMOVED the "HEAD" specific return.
+    # Now HEAD requests will trigger the scraping logic below.
 
     asins = list_all_items_distinct_asins()
     if not asins: return "No items to update", 200
