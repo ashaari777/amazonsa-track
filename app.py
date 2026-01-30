@@ -752,17 +752,22 @@ def admin_items():
     return render_template("admin_items.html", items=rows)
 
 # --- UPDATED CRON ROUTE FOR UPTIMEROBOT ---
-@app.route("/cron/update-all", methods=["GET", "POST"]) # Accepts GET for UptimeRobot
+@app.route("/cron/update-all", methods=["GET", "POST", "HEAD"]) # Added HEAD
 def cron_update_all():
-    # 1. Check CRON_TOKEN via URL query param (?token=...) or Header
+    # 1. Check CRON_TOKEN via URL query param or Header
     token = request.args.get("token") or request.headers.get("X-CRON-TOKEN") or ""
     
     if not CRON_TOKEN:
         return "CRON_TOKEN not set in environment.", 500
         
-    # Constant time comparison to prevent timing attacks
+    # Constant time comparison
     if not hmac.compare_digest(token, CRON_TOKEN):
         return "Unauthorized: Invalid Token", 401
+
+    # For HEAD requests (UptimeRobot), just return 200 OK if token is valid
+    # We don't want to trigger the heavy scraping on a HEAD check, just keep awake.
+    if request.method == "HEAD":
+        return "OK", 200
 
     asins = list_all_items_distinct_asins()
     if not asins: return "No items to update", 200
@@ -774,7 +779,6 @@ def cron_update_all():
     for asin, data in results_by_asin.items():
         item_ids = list_all_item_ids_for_asin(asin)
         for item_id in item_ids:
-            # write_history_for_item now handles the "1-hour rule" internally
             write_history_for_item(item_id, data)
             wrote += 1
             
