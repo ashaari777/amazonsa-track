@@ -2,3 +2,4 @@ Flask==3.0.0
 gunicorn==21.2.0
 playwright==1.49.0
 psycopg2-binary==2.9.10
+requests==2.31.0
