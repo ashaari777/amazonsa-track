@@ -4,38 +4,43 @@
   <meta charset="utf-8" />
   <title>Admin - Items</title>
   <style>
-    body{font-family:Arial;margin:0;background:#f5f5f5}
-    .top{background:#111;color:#fff;padding:12px 16px}
-    .container{max-width:1100px;margin:18px auto;padding:0 14px}
-    .panel{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.08);padding:14px}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
-    a{color:#111}
-    .muted{color:#666;font-size:13px}
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f5f7fa; padding: 20px; color: #333; }
+    .panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .btn-back { text-decoration: none; color: #333; border: 1px solid #ccc; padding: 6px 12px; border-radius: 4px; font-size: 0.9em; background: #f9f9f9; }
+    
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; background: #232f3e; color: #fff; padding: 12px; font-size: 0.9em; }
+    td { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.9em; }
+    a { color: #2b6cb0; text-decoration: none; }
+    .muted { color: #666; font-size: 0.85em; }
   </style>
 </head>
 <body>
-  <div class="top"><strong>Admin: All Items</strong> • <a style="color:#fff" href="{{ url_for('index') }}">Back</a></div>
-  <div class="container">
-    <div class="panel">
-      <table>
-        <thead>
-          <tr><th>User</th><th>ASIN</th><th>Title</th><th>Latest price</th><th>Last</th><th>Link</th></tr>
-        </thead>
-        <tbody>
-          {% for it in items %}
-            <tr>
-              <td class="muted">{{ it["user_email"] }}</td>
-              <td>{{ it["asin"] }}</td>
-              <td>{{ it["latest_name"] if it["latest_name"] else "-" }}</td>
-              <td>{{ it["latest_price_text"] if it["latest_price_text"] else "-" }}</td>
-              <td class="muted">{{ it["latest_ts"] if it["latest_ts"] else "-" }}</td>
-              <td><a href="{{ it['url'] }}" target="_blank" rel="noopener">Open</a></td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  <div class="panel">
+    <div class="header">
+      <h2>All Tracked Items</h2>
+      <a href="{{ url_for('index') }}" class="btn-back">Back to Dashboard</a>
     </div>
+    <table>
+      <thead>
+        <tr><th>User</th><th>ASIN</th><th>Title</th><th>Latest Price</th><th>Last Update</th><th>Link</th></tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          <tr>
+            <td class="muted">{{ it["user_email"] }}</td>
+            <td>{{ it["asin"] }}</td>
+            <td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                {{ it["latest_name"] if it["latest_name"] else "-" }}
+            </td>
+            <td><strong>{{ it["latest_price_text"] if it["latest_price_text"] else "-" }}</strong></td>
+            <td class="muted">{{ it["latest_ts"] if it["latest_ts"] else "-" }}</td>
+            <td><a href="{{ it['url'] }}" target="_blank" rel="noopener">Open</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </body>
 </html>
