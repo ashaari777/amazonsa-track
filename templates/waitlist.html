@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Waitlist</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #000;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .container {
+      text-align: center;
+      position: relative;
+      z-index: 2;
+    }
+
+    h2 {
+      font-size: 2rem;
+      font-weight: 300;
+      margin-bottom: 0.5rem;
+      letter-spacing: 1px;
+      background: linear-gradient(90deg, #fff, #aaa, #fff);
+      background-size: 200%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shine 3s linear infinite;
+    }
+
+    @keyframes shine {
+      0% { background-position: -100%; }
+      100% { background-position: 100%; }
+    }
+
+    .waitlist-text {
+      font-size: 6rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: -2px;
+      color: #111;
+      text-shadow: 0 0 5px rgba(255, 255, 255, 0.1), 0 0 10px rgba(255, 255, 255, 0.1);
+      margin: 0;
+      line-height: 1;
+      position: relative;
+    }
+    
+    .waitlist-text::after {
+        content: "Waitlist";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .glow-effect {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 300px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(255, 100, 50, 0.2) 0%, rgba(0, 0, 0, 0) 70%);
+      z-index: -1;
+      filter: blur(40px);
+    }
+
+    .logout-btn {
+        margin-top: 40px;
+        background: transparent;
+        border: 1px solid #333;
+        color: #666;
+        padding: 8px 20px;
+        border-radius: 20px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    .logout-btn:hover {
+        border-color: #fff;
+        color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="glow-effect"></div>
+  <div class="container">
+    <h2>You will access soon.</h2>
+    <div class="waitlist-text">Waitlist</div>
+    
+    <form method="post" action="{{ url_for('logout') }}">
+        <button class="logout-btn">Log Out</button>
+    </form>
+  </div>
+</body>
+</html>
