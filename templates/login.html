@@ -2,21 +2,89 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Login</title>
+  <title>Welcome Back</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
   <style>
-    body{font-family:Arial;margin:0;background:#f5f5f5}
-    .box{max-width:420px;margin:60px auto;background:#fff;padding:20px;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.08)}
-    input{width:100%;padding:10px;margin:8px 0;border:1px solid #ddd;border-radius:8px}
-    button{width:100%;padding:10px;border:0;border-radius:8px;background:#111;color:#fff;font-weight:bold;cursor:pointer}
-    a{color:#111}
-    .msg{padding:10px;border-radius:8px;margin:10px 0}
-    .ok{background:#eaffea}
-    .error{background:#ffecec}
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Poppins', sans-serif; }
+    body {
+      background: #0f0c29;
+      background: linear-gradient(to right, #24243e, #302b63, #0f0c29);
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+      color: #fff;
+    }
+    
+    /* Background Orbs */
+    .orb { position: absolute; border-radius: 50%; filter: blur(80px); z-index: 0; }
+    .orb-1 { width: 300px; height: 300px; background: #7f00ff; top: -50px; left: -50px; }
+    .orb-2 { width: 400px; height: 400px; background: #e100ff; bottom: -100px; right: -50px; }
+
+    .glass-container {
+      position: relative;
+      z-index: 1;
+      width: 380px;
+      padding: 40px;
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+    }
+
+    h2 { font-size: 2rem; font-weight: 600; margin-bottom: 5px; }
+    .subtitle { font-size: 0.9rem; color: rgba(255,255,255,0.6); margin-bottom: 30px; display: block; }
+
+    .input-group { margin-bottom: 20px; }
+    input {
+      width: 100%;
+      padding: 15px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 0.9rem;
+      outline: none;
+      transition: 0.3s;
+    }
+    input:focus { border-color: #d53369; background: rgba(255, 255, 255, 0.1); }
+    input::placeholder { color: rgba(255,255,255,0.4); }
+
+    .btn {
+      width: 100%;
+      padding: 15px;
+      border: none;
+      border-radius: 30px;
+      background: linear-gradient(90deg, #da22ff, #9733ee);
+      color: #fff;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-top: 10px;
+      box-shadow: 0 5px 15px rgba(218, 34, 255, 0.4);
+      transition: 0.3s;
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(218, 34, 255, 0.6); }
+
+    .links { margin-top: 20px; text-align: center; font-size: 0.85rem; color: rgba(255,255,255,0.6); }
+    .links a { color: #fff; text-decoration: none; font-weight: 600; margin-left: 5px; }
+    .links a:hover { text-decoration: underline; }
+
+    .msg { padding: 10px; border-radius: 8px; margin-bottom: 20px; font-size: 0.85em; text-align: center; }
+    .error { background: rgba(255, 80, 80, 0.2); color: #ff8080; border: 1px solid rgba(255, 80, 80, 0.3); }
+    .ok { background: rgba(80, 255, 150, 0.2); color: #80ff96; border: 1px solid rgba(80, 255, 150, 0.3); }
   </style>
 </head>
 <body>
-  <div class="box">
-    <h2>Login</h2>
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+
+  <div class="glass-container">
+    <h2>Welcome Back</h2>
+    <span class="subtitle">Please enter your details to sign in.</span>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -27,16 +95,20 @@
     {% endwith %}
 
     <form method="post">
-      <input name="email" placeholder="Email" type="email" required />
-      <input name="password" placeholder="Password" type="password" required />
-      <button type="submit">Login</button>
+      <div class="input-group">
+        <input name="email" placeholder="Email Address" type="email" required />
+      </div>
+      <div class="input-group">
+        <input name="password" placeholder="Password" type="password" required />
+      </div>
+      
+      <button type="submit" class="btn">Log In</button>
     </form>
 
-    <p style="margin-top:12px">
-      <a href="{{ url_for('forgot') }}">Forgot password?</a>
-      <br/>
-      <a href="{{ url_for('register') }}">Create account</a>
-    </p>
+    <div class="links">
+      <a href="{{ url_for('forgot') }}" style="display:block; margin-bottom:10px; font-weight:400; color:rgba(255,255,255,0.5);">Forgot Password?</a>
+      Don't have an account? <a href="{{ url_for('register') }}">Sign up</a>
+    </div>
   </div>
 </body>
 </html>
