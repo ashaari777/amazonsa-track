@@ -643,9 +643,30 @@ def run_global_scrape():
 def cron_update_all():
     token = request.args.get("token") or request.headers.get("X-CRON-TOKEN") or ""
     if not CRON_TOKEN or not hmac.compare_digest(token, CRON_TOKEN): return "Unauthorized", 401
+
+    # 1. Check the last time we updated the prices
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(ts) as last_run FROM price_history")
+    row = cur.fetchone()
+    conn.close()
+
+    # 2. Logic: If last update was less than 4 hours ago, SKIP.
+    if row and row['last_run']:
+        try:
+            last_run = datetime.strptime(str(row['last_run']), "%Y-%m-%d %H:%M:%S")
+            time_diff = datetime.utcnow() - last_run
+            
+            # 4 Hours = 14400 seconds
+            if time_diff.total_seconds() < 14400:
+                return f"Skipped: Last update was {int(time_diff.total_seconds()/60)} mins ago (Limit: 240 mins).", 200
+        except:
+            pass # If error parsing date, just proceed to update
+
+    # 3. If 4 hours passed (or first run), Start Scraping
     thread = threading.Thread(target=run_global_scrape)
     thread.start()
-    return f"OK", 200
+    return f"OK - Starting Update (Last run was > 4 hours ago)", 200
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
