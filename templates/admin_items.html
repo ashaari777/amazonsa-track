@@ -6,9 +6,15 @@
   <style>
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f5f7fa; padding: 20px; color: #333; }
     .panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .btn-back { text-decoration: none; color: #333; border: 1px solid #ccc; padding: 6px 12px; border-radius: 4px; font-size: 0.9em; background: #f9f9f9; }
     
+    /* Top Navigation Bar */
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    .nav-links a { text-decoration: none; color: #555; margin-right: 15px; font-weight: 600; padding: 5px 10px; border-radius: 4px; }
+    .nav-links a.active { background: #232f3e; color: #fff; }
+    .nav-links a:hover { background: #e2e8f0; color: #111; }
+    
+    .btn-logout { background: transparent; border: 1px solid #ccc; color: #555; padding: 5px 10px; border-radius: 4px; cursor:pointer; }
+
     table { width: 100%; border-collapse: collapse; }
     th { text-align: left; background: #232f3e; color: #fff; padding: 12px; font-size: 0.9em; }
     td { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.9em; }
@@ -19,9 +25,19 @@
 <body>
   <div class="panel">
     <div class="header">
-      <h2>All Tracked Items</h2>
-      <a href="{{ url_for('index') }}" class="btn-back">Back to Dashboard</a>
+      <div class="nav-links">
+          <a href="{{ url_for('admin_users') }}">Users</a>
+          <a href="{{ url_for('admin_items') }}" class="active">Items</a>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+          <span>Admin Panel</span>
+          <form method="post" action="{{ url_for('logout') }}" style="display:inline">
+              <button class="btn-logout" type="submit">Logout</button>
+          </form>
+      </div>
     </div>
+
+    <h2>All Tracked Items</h2>
     <table>
       <thead>
         <tr><th>User</th><th>ASIN</th><th>Title</th><th>Latest Price</th><th>Last Update</th><th>Link</th></tr>
