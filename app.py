@@ -453,7 +453,11 @@ def login():
     session["user_id"] = user["id"]
     session["role"] = user["role"]
     
-    return redirect(url_for("index"))
+    # If Admin, go straight to Users list. If User, go to Items.
+    if user["role"] == "admin":
+        return redirect(url_for("admin_users"))
+    else:
+        return redirect(url_for("index"))
 
 @app.route("/logout", methods=["POST"])
 @login_required
