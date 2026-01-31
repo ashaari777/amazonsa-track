@@ -2,77 +2,106 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Admin Users</title>
+  <title>Admin - User Management</title>
   <style>
-    body{font-family:'Segoe UI', sans-serif;margin:0;background:#f5f7fa;padding:20px}
-    .panel{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:20px;max-width:1200px;margin:0 auto}
-    table{width:100%;border-collapse:collapse;margin-top:15px;font-size:0.9em}
-    th,td{padding:12px;border-bottom:1px solid #eee;text-align:left}
-    th{background:#f9fafb;color:#4a5568}
-    .btn{padding:4px 8px;border:1px solid #cbd5e0;border-radius:4px;cursor:pointer;background:#fff;font-size:0.85em}
-    .btn-del{color:red;border-color:red}
-    .tag-paused{background:#fed7d7;color:#c53030;padding:2px 6px;border-radius:4px;font-size:0.8em;font-weight:bold}
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f5f7fa; padding: 20px; color: #333; }
+    
+    .panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; overflow-x: auto; }
+    
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .header h2 { margin: 0; }
+    .btn-back { text-decoration: none; color: #333; border: 1px solid #ccc; padding: 5px 10px; border-radius: 4px; font-size: 0.9em; background: #f9f9f9; }
+    
+    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    th { text-align: left; background: #232f3e; color: #fff; padding: 12px; font-size: 0.9em; }
+    td { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.9em; vertical-align: top; }
+    tr:hover { background: #f9f9f9; }
+    
+    .btn { padding: 5px 10px; cursor: pointer; border-radius: 4px; font-size: 0.85em; border: 1px solid transparent; }
+    .btn-pause { background: #f6ad55; color: #fff; }
+    .btn-active { background: #48bb78; color: #fff; }
+    .btn-delete { background: #e53e3e; color: #fff; margin-left: 5px; }
+    
+    .info-sub { font-size: 0.85em; color: #666; margin-top: 2px; }
+    .status-paused { background: #ffecec; color: #c53030; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.8em; }
   </style>
 </head>
 <body>
-  <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <h2>All Registered Users</h2>
-      <a href="{{ url_for('index') }}" class="btn">Back to Dashboard</a>
-    </div>
-    
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Email</th>
-          <th>Status</th>
-          <th>Items</th>
-          <th>IP / Location</th>
-          <th>Device</th>
-          <th>Created / Last Login</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for u in users %}
-          <tr>
-            <td>{{ u.id }}</td>
-            <td>
-                {{ u.email }}
-                {% if u.role == 'admin' %} <strong>(Admin)</strong> {% endif %}
-            </td>
-            <td>
-                {% if u.is_paused %}
-                    <span class="tag-paused">PAUSED</span>
-                {% else %}
-                    <span style="color:green">Active</span>
-                {% endif %}
-            </td>
-            <td>{{ u.items_count }}</td>
-            <td>
-                <div>{{ u.ip_address or '-' }}</div>
-                <div style="font-size:0.85em;color:#666">{{ u.location or 'Unknown' }}</div>
-            </td>
-            <td title="{{ u.device_name }}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                {{ u.device_name or '-' }}
-            </td>
-            <td>
-                <div style="font-size:0.85em">C: {{ u.created_at }}</div>
-                <div style="font-size:0.85em;color:#666">L: {{ u.last_login_at }}</div>
-            </td>
-            <td>
-                <form method="post" action="{{ url_for('admin_user_pause', user_id=u.id) }}" style="display:inline">
-                    <button class="btn" type="submit">{{ 'Unpause' if u.is_paused else 'Pause' }}</button>
-                </form>
-                <form method="post" action="{{ url_for('admin_user_delete', user_id=u.id) }}" style="display:inline" onsubmit="return confirm('Delete user?');">
-                    <button class="btn btn-del" type="submit">Delete</button>
-                </form>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+
+<div class="panel">
+  <div class="header">
+    <h2>All Registered Users</h2>
+    <a href="{{ url_for('index') }}" class="btn-back">Back to Dashboard</a>
   </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>IP Address</th>
+        <th>Device Name</th>
+        <th>Location</th>
+        <th>Creation Date</th>
+        <th>Last Login</th>
+        <th>Items</th>
+        <th>Options</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr style="{{ 'opacity: 0.6;' if u.is_paused else '' }}">
+        <!-- Email -->
+        <td>
+          <strong>{{ u.email }}</strong>
+          {% if u.role == 'admin' %} <span style="font-size:0.8em; color:#2b6cb0;">(Admin)</span> {% endif %}
+          {% if u.is_paused %} <br><span class="status-paused">PAUSED</span> {% endif %}
+        </td>
+
+        <!-- IP -->
+        <td>{{ u.ip_address if u.ip_address else "-" }}</td>
+
+        <!-- Device Name -->
+        <td>
+            <div style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{{ u.device_name }}">
+                {{ u.device_name if u.device_name else "-" }}
+            </div>
+        </td>
+
+        <!-- Location -->
+        <td>{{ u.location if u.location else "-" }}</td>
+
+        <!-- Creation Date -->
+        <td>{{ u.created_at }}</td>
+
+        <!-- Last Login -->
+        <td>{{ u.last_login_at if u.last_login_at else "Never" }}</td>
+
+        <!-- Number of Items -->
+        <td style="text-align: center; font-weight: bold;">{{ u.items_count }}</td>
+
+        <!-- Options -->
+        <td>
+          <div style="display:flex;">
+            <!-- Pause / Unpause Form -->
+            <form method="post" action="{{ url_for('admin_user_pause', user_id=u.id) }}">
+                {% if u.is_paused %}
+                    <button class="btn btn-active" type="submit">Unpause</button>
+                {% else %}
+                    <button class="btn btn-pause" type="submit">Pause</button>
+                {% endif %}
+            </form>
+
+            <!-- Delete Form -->
+            <form method="post" action="{{ url_for('admin_user_delete', user_id=u.id) }}" onsubmit="return confirm('Are you sure you want to delete this user and all their data?');">
+                <button class="btn btn-delete" type="submit">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
 </body>
 </html>
