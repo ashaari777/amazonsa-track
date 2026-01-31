@@ -59,7 +59,6 @@ def init_db():
     conn = db_conn()
     cur = conn.cursor()
     
-    # Create Tables
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -75,14 +74,13 @@ def init_db():
         );
     """)
 
-    # Migration for existing DBs (Add new columns if missing)
+    # Migration for existing DBs
     try:
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ip_address TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS device_name TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_paused BOOLEAN DEFAULT FALSE;")
     except Exception as e:
-        print(f"Migration Note: {e}")
         conn.rollback()
 
     cur.execute("""
@@ -129,8 +127,7 @@ def init_db():
 
 try:
     init_db()
-except Exception as e:
-    print(f"DB Init Error: {e}")
+except: pass
 
 # ---------------- Auth helpers ----------------
 
@@ -147,8 +144,22 @@ def current_user():
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if not session.get("user_id"):
+        uid = session.get("user_id")
+        if not uid:
             return redirect(url_for("login", next=request.path))
+        
+        # SECURITY: Check status on every request to ensure immediate pause
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT is_paused FROM users WHERE id=%s", (uid,))
+        status = cur.fetchone()
+        conn.close()
+        
+        if not status or status['is_paused']:
+            session.clear()
+            flash("Your account has been suspended.", "error")
+            return redirect(url_for("login"))
+            
         return fn(*args, **kwargs)
     return wrapper
 
@@ -164,14 +175,12 @@ def admin_required(fn):
 
 def get_location_from_ip(ip):
     try:
-        # Simple free IP geolocation
         if ip and ip != '127.0.0.1':
             r = requests.get(f"http://ip-api.com/json/{ip}", timeout=3)
             data = r.json()
             if data['status'] == 'success':
                 return f"{data.get('city')}, {data.get('country')}"
-    except:
-        pass
+    except: pass
     return "Unknown"
 
 # ---------------- Utility helpers ----------------
@@ -295,10 +304,15 @@ async def scrape_one_with_context(browser, asin: str) -> dict:
         try: await context.close()
         except: pass
 
+    # If price found but text is missing, reconstruct it for display
+    price_val = parse_money_value(price)
+    if price_val and not price:
+        price = f"SAR {price_val:.2f}"
+
     return {
         "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
         "asin": asin, "url": url, 
-        "item_name": item_name, "price_text": price, "price_value": parse_money_value(price),
+        "item_name": item_name, "price_text": price, "price_value": price_val,
         "rating": rating, "reviews_count": reviews_count, "discount_percent": discount_percent,
         "error": error_msg
     }
@@ -355,8 +369,6 @@ def write_history_for_item(item_id: int, data: dict):
                      should_insert = False
                      cur.execute("UPDATE price_history SET ts=%s WHERE id=%s", (data.get("timestamp"), latest["id"]))
                      conn.commit()
-                     conn.close()
-                     return
              except: should_insert = True
 
     if should_insert:
@@ -397,7 +409,6 @@ def register():
     if password != password2:
         flash("Passwords do not match.", "error"); return redirect(url_for("register"))
     
-    # Auto-assign admin if matches SUPER_ADMIN_EMAIL
     role = "admin" if (email == SUPER_ADMIN_EMAIL.lower()) else "user"
     
     conn = db_conn()
@@ -417,7 +428,6 @@ def login():
     email = (request.form.get("email") or "").strip().lower()
     password = request.form.get("password") or ""
     
-    # Capture User Info
     ip_address = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
     device_name = request.user_agent.string
     
@@ -430,17 +440,14 @@ def login():
         conn.close()
         flash("Invalid email or password.", "error"); return redirect(url_for("login"))
         
-    # Check if Paused
     if user.get("is_paused"):
         conn.close()
-        flash("Your account has been suspended by the administrator.", "error"); return redirect(url_for("login"))
+        flash("Your account has been suspended.", "error"); return redirect(url_for("login"))
 
-    # Force Admin Role if it matches the specific email
     if email == SUPER_ADMIN_EMAIL.lower() and user["role"] != "admin":
         cur.execute("UPDATE users SET role='admin' WHERE id=%s", (user["id"],))
-        user = dict(user); user["role"] = "admin" # Update local dict
+        user = dict(user); user["role"] = "admin"
     
-    # Update Tracking Info
     location = get_location_from_ip(ip_address)
     cur.execute("""
         UPDATE users 
@@ -453,7 +460,6 @@ def login():
     session["user_id"] = user["id"]
     session["role"] = user["role"]
     
-    # If Admin, go straight to Users list. If User, go to Items.
     if user["role"] == "admin":
         return redirect(url_for("admin_users"))
     else:
@@ -475,18 +481,15 @@ def forgot():
     user = cur.fetchone()
     conn.close()
     reset_link = None
-    # Simple manual token generation for now
     if user:
-        token = secrets.token_urlsafe(32) # In real app, save this token to DB
+        token = secrets.token_urlsafe(32)
         reset_link = url_for("reset_password", token=token, _external=True)
     flash("If that email exists, a reset link is available.", "ok")
     return render_template("forgot.html", reset_link=reset_link)
 
 @app.route("/reset/<token>", methods=["GET", "POST"])
 def reset_password(token):
-    # For this simplified version, we just show the form if token is present
     if request.method == "GET": return render_template("reset.html")
-    # In real app, validate token here
     flash("Password reset functionality is simplified in this version.", "ok")
     return redirect(url_for("login"))
 
@@ -510,10 +513,19 @@ def index():
     for it in items:
         cur.execute("SELECT * FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1", (it["id"],))
         latest = cur.fetchone()
+        
+        # Logic to fix "Pending..." display if we have value but no text
+        display_price = None
+        if latest:
+            if latest.get("price_text"):
+                display_price = latest["price_text"]
+            elif latest.get("price_value"):
+                display_price = f"SAR {latest['price_value']:.2f}"
+
         enriched.append({
             "id": it["id"], "asin": it["asin"], "url": it["url"], "created_at": it["created_at"],
             "latest_name": latest["item_name"] if latest and latest["item_name"] else None,
-            "latest_price_text": latest["price_text"] if latest else None,
+            "latest_price_text": display_price,
             "latest_discount": latest["discount_percent"] if latest else None,
             "latest_ts": latest["ts"] if latest else None,
         })
@@ -604,21 +616,35 @@ def history_json(asin):
 def admin_users():
     conn = db_conn()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT u.*, (SELECT COUNT(*) FROM items i WHERE i.user_id=u.id) AS items_count 
-        FROM users u 
-        ORDER BY created_at DESC
-    """)
+    
+    # 1. Get Users
+    cur.execute("SELECT * FROM users ORDER BY created_at DESC")
     users = cur.fetchall()
+    
+    # 2. Get Items for Dropdown (ASIN + Title)
+    # Using a subquery to get the latest title for each item
+    cur.execute("""
+        SELECT i.user_id, i.asin, 
+               (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) as title 
+        FROM items i
+    """)
+    all_items = cur.fetchall()
+    
+    # Map items to user_id for template
+    user_items_map = {}
+    for item in all_items:
+        uid = item['user_id']
+        if uid not in user_items_map: user_items_map[uid] = []
+        user_items_map[uid].append(item)
+
     conn.close()
-    return render_template("admin_users.html", users=users)
+    return render_template("admin_users.html", users=users, user_items_map=user_items_map)
 
 @app.route("/admin/user/<int:user_id>/pause", methods=["POST"])
 @admin_required
 def admin_user_pause(user_id):
     conn = db_conn()
     cur = conn.cursor()
-    # Toggle pause status
     cur.execute("UPDATE users SET is_paused = NOT is_paused WHERE id=%s", (user_id,))
     conn.commit()
     conn.close()
@@ -662,18 +688,13 @@ def admin_items():
     conn.close()
     return render_template("admin_items.html", items=rows)
 
-# ---------------- Cron ----------------
-
 @app.route("/cron/update-all", methods=["GET", "POST", "HEAD"]) 
 def cron_update_all():
     token = request.args.get("token") or request.headers.get("X-CRON-TOKEN") or ""
     if not CRON_TOKEN or not hmac.compare_digest(token, CRON_TOKEN):
         return "Unauthorized", 401
 
-    if request.method == "HEAD":
-        # UptimeRobot HEAD check - we still want to trigger the scrape?
-        # User said "Update request happen from Uptimerobot". So we proceed.
-        pass
+    if request.method == "HEAD": pass
 
     conn = db_conn()
     cur = conn.cursor()
@@ -687,7 +708,6 @@ def cron_update_all():
     results = run_async(scrape_many_sequential_with_delays, asins)
     
     for asin, data in results.items():
-        # Get all item IDs for this ASIN (could be multiple users tracking same item)
         conn = db_conn()
         cur = conn.cursor()
         cur.execute("SELECT id FROM items WHERE asin=%s", (asin,))
