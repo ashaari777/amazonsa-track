@@ -22,9 +22,7 @@
     .btn2 { padding: 8px 14px; border: 1px solid #cbd5e0; border-radius: 6px; background: #fff; color: #4a5568; font-weight: 600; cursor: pointer; }
     .btn-del { color: #e53e3e; border-color: #feb2b2; }
 
-    /* Responsive Grid */
     .charts-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 16px; }
-    
     .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 16px; display: flex; flex-direction: column; }
     .title-area { margin-bottom: 8px; min-height: 44px; }
     .title-text { font-weight: 700; font-size: 0.95em; color: #2d3748; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -123,14 +121,14 @@ async function loadHistory(asin) {
 function buildChart(canvasId, points) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   
-  // Filter out null prices to calculate Min/Max for prettier scales
-  const validPrices = points.filter(p => p.price_value !== null).map(p => p.price_value);
-  const minPrice = validPrices.length ? Math.min(...validPrices) * 0.9 : 0;
-  const maxPrice = validPrices.length ? Math.max(...validPrices) * 1.1 : 100;
+  // Strict check to remove zeros from the view
+  const validPoints = points.filter(p => p.price_value > 0);
+  if (validPoints.length === 0) return;
 
-  const labels = points.map(p => p.ts ? p.ts.substring(5, 16) : "");
-  const prices = points.map(p => p.price_value);
+  const labels = validPoints.map(p => p.ts ? p.ts.substring(5, 16) : "");
+  const prices = validPoints.map(p => p.price_value);
 
+  // KEEPA STYLE: Stepped + Orange Fill
   new Chart(ctx, {
     type: 'line',
     data: {
@@ -138,30 +136,24 @@ function buildChart(canvasId, points) {
       datasets: [{
         label: 'Price',
         data: prices,
-        borderColor: '#06b6d4', // Cyan color
-        backgroundColor: 'rgba(6, 182, 212, 0.15)', // Light Cyan fill
+        stepped: 'before', // This makes the lines jump vertically
+        borderColor: '#FF9900', // Amazon Orange
+        backgroundColor: 'rgba(255, 153, 0, 0.2)',
         borderWidth: 2,
-        pointBackgroundColor: '#fff',
-        pointBorderColor: '#06b6d4',
-        pointRadius: 4,
+        pointRadius: 0,
         pointHoverRadius: 6,
         fill: true,
-        tension: 0.4, // Smooth curve
-        spanGaps: true // Fixes broken lines
+        spanGaps: true
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: { legend: { display: false } },
       scales: {
         x: { display: false },
-        y: { 
-            display: true, 
-            min: Math.floor(minPrice),
-            max: Math.ceil(maxPrice),
-            grid: { color: '#f0f0f0' }
-        }
+        y: { display: true, position: 'right', grid: { color: '#f5f5f5' } }
       }
     }
   });
