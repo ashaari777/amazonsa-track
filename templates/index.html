@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Amazon Tracker Dashboard</title>
+  <title>Amazon.sa Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -28,7 +28,7 @@
         overflow-x: hidden;
     }
 
-    /* Sidebar */
+    /* --- SIDEBAR (Desktop) --- */
     .sidebar {
         width: 250px;
         background: rgba(20, 20, 35, 0.8);
@@ -42,8 +42,15 @@
         z-index: 10;
     }
     
-    .brand { font-size: 1.4rem; font-weight: 700; margin-bottom: 40px; display: flex; align-items: center; gap: 10px; }
-    .brand-icon { width: 30px; height: 30px; background: linear-gradient(135deg, #d53369, #daae51); border-radius: 8px; }
+    .user-email-top {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #fff;
+        margin-bottom: 40px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--border);
+        word-break: break-all;
+    }
     
     .nav-item {
         display: flex;
@@ -63,29 +70,26 @@
     }
     
     .nav-item.active { border-left: 3px solid #daae51; }
-    
     .spacer { flex-grow: 1; }
     
-    .user-profile {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding-top: 20px;
-        border-top: 1px solid var(--border);
+    .logout-btn-sidebar {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        padding: 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        width: 100%;
+        transition: 0.3s;
     }
-    
-    .avatar {
-        width: 40px; height: 40px;
-        background: linear-gradient(45deg, #8E2DE2, #4A00E0);
-        border-radius: 50%;
-        display: flex; align-items: center; justify-content: center; font-weight: bold;
-    }
+    .logout-btn-sidebar:hover { border-color: #fff; color: #fff; }
 
-    /* Main Content */
+    /* --- MAIN CONTENT --- */
     .main {
         margin-left: 250px;
         flex: 1;
         padding: 30px 40px;
+        width: 100%;
     }
     
     .header {
@@ -96,14 +100,16 @@
     }
     
     .header h1 { font-size: 1.8rem; font-weight: 600; }
-    .last-update { font-size: 0.9rem; color: var(--text-muted); background: rgba(255,255,255,0.05); padding: 5px 12px; border-radius: 20px; }
+    
+    /* Mobile Header (Hidden on Desktop) */
+    .mobile-header { display: none; }
 
-    /* Add Item Section (Styled as Dashboard Widget) */
+    /* --- ADD ITEM WIDGET --- */
     .add-panel {
         background: var(--card-bg);
         border: 1px solid var(--border);
         border-radius: 20px;
-        padding: 25px;
+        padding: 20px;
         margin-bottom: 30px;
         display: flex;
         align-items: center;
@@ -115,26 +121,29 @@
         flex: 1;
         background: rgba(0,0,0,0.2);
         border: 1px solid var(--border);
-        padding: 12px 20px;
+        padding: 15px 20px; /* Taller input for better touch */
         border-radius: 12px;
         color: #fff;
         outline: none;
+        font-size: 1rem;
+        min-width: 0; /* Fix flexbox shrinking */
     }
     .search-input:focus { border-color: #daae51; }
     
     .btn-glow {
         background: linear-gradient(90deg, #d53369, #daae51);
         border: none;
-        padding: 12px 30px;
+        padding: 15px 30px;
         border-radius: 12px;
         color: #fff;
         font-weight: 600;
         cursor: pointer;
         transition: 0.3s;
+        white-space: nowrap;
     }
     .btn-glow:hover { box-shadow: 0 0 15px rgba(218, 174, 81, 0.4); }
 
-    /* Grid Layout */
+    /* --- GRID LAYOUT --- */
     .grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -196,23 +205,59 @@
     .btn-delete { color: #ef4444; }
     .btn-delete:hover { color: #f87171; }
 
-    /* Responsive */
+    /* --- MOBILE RESPONSIVENESS --- */
     @media (max-width: 768px) {
-        .sidebar { width: 70px; padding: 20px 10px; }
-        .sidebar span, .brand-text, .user-info { display: none; }
-        .main { margin-left: 70px; padding: 20px; }
-        .add-panel { flex-direction: column; }
-        .search-input, .btn-glow { width: 100%; }
+        /* Hide Sidebar */
+        .sidebar { display: none; }
+        
+        /* Reset Main Content Margins */
+        .main { margin-left: 0; padding: 15px; }
+        
+        /* Hide Dashboard Title on Mobile */
+        .header h1 { display: none; }
+        .header .last-update { display: none; } /* Optional: Hide update time to save space */
+        
+        /* Show Mobile Header */
+        .mobile-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border);
+        }
+        .mobile-user { font-weight: 600; font-size: 0.9rem; }
+        .mobile-logout {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+
+        /* Fix Search Bar Sizing */
+        .add-panel {
+            flex-direction: column; /* Stack input and button */
+            padding: 15px;
+            gap: 10px;
+        }
+        .search-input { width: 100%; }
+        .btn-glow { width: 100%; padding: 12px; }
+        
+        /* Adjust Grid for Mobile */
+        .grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
 
-  <!-- Sidebar -->
+  <!-- Sidebar (Desktop Only) -->
   <div class="sidebar">
-    <div class="brand">
-        <div class="brand-icon"></div>
-        <span class="brand-text">Zarss</span>
+    <!-- User Email at Top (Requested) -->
+    <div class="user-email-top">
+        {{ user["email"] }}
     </div>
     
     <a href="#" class="nav-item active">
@@ -230,32 +275,35 @@
     
     <div class="spacer"></div>
     
-    <div class="user-profile">
-        <div class="avatar">{{ user["email"][0]|upper }}</div>
-        <div class="user-info" style="overflow:hidden;">
-            <div style="font-size:0.9rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ user["email"].split('@')[0] }}</div>
-            <form method="post" action="{{ url_for('logout') }}">
-                <button type="submit" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:0.8rem;">Log Out</button>
-            </form>
-        </div>
-    </div>
+    <form method="post" action="{{ url_for('logout') }}">
+        <button type="submit" class="logout-btn-sidebar">Log Out</button>
+    </form>
   </div>
 
   <!-- Main Content -->
   <div class="main">
+    <!-- Mobile Header (Visible only on Mobile) -->
+    <div class="mobile-header">
+        <div class="mobile-user">{{ user["email"] }}</div>
+        <form method="post" action="{{ url_for('logout') }}">
+            <button class="mobile-logout">Log Out</button>
+        </form>
+    </div>
+
+    <!-- Desktop Header -->
     <div class="header">
         <div>
-            <h1 style="margin-bottom:5px;">Dashboard</h1>
-            <span style="color:var(--text-muted);">Real-time price tracking updates</span>
+            <h1>Dashboard</h1>
+            <span style="color:var(--text-muted); display:none;">Real-time updates</span> <!-- Hidden subtitle -->
         </div>
-        <div class="last-update">Updated: {{ last_global_update }}</div>
+        <div class="last-update" style="color:var(--text-muted); font-size:0.85em;">Updated: {{ last_global_update }}</div>
     </div>
 
     <!-- Add Item Widget -->
     <div class="add-panel">
-        <form method="post" action="{{ url_for('add') }}" style="display:flex; width:100%; gap:15px; align-items:center;">
+        <form method="post" action="{{ url_for('add') }}" style="display:flex; width:100%; gap:15px; align-items:center; flex-wrap:wrap;">
             <input name="item" class="search-input" placeholder="Paste Amazon.sa link or ASIN..." required />
-            <button class="btn-glow" type="submit">Track Item</button>
+            <button class="btn-glow" type="submit">Add</button> <!-- Changed Text to 'Add' -->
         </form>
     </div>
 
@@ -323,6 +371,8 @@ async function loadHistory(asin) {
 
 function buildChart(canvasId, points) {
   const ctx = document.getElementById(canvasId).getContext('2d');
+  
+  // Filter out 0s/nulls to avoid lines dropping to floor
   const validPoints = points.filter(p => p.price_value > 0);
   if (validPoints.length === 0) return;
 
@@ -331,8 +381,8 @@ function buildChart(canvasId, points) {
 
   // Gradient Fill
   const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-  gradient.addColorStop(0, 'rgba(213, 51, 105, 0.5)'); // Pink/Red top
-  gradient.addColorStop(1, 'rgba(213, 51, 105, 0)');   // Transparent bottom
+  gradient.addColorStop(0, 'rgba(213, 51, 105, 0.5)'); 
+  gradient.addColorStop(1, 'rgba(213, 51, 105, 0)');   
 
   new Chart(ctx, {
     type: 'line',
@@ -340,7 +390,7 @@ function buildChart(canvasId, points) {
       labels: labels,
       datasets: [{
         data: prices,
-        stepped: 'before',
+        stepped: 'before', // Keepa-style steps
         borderColor: '#d53369',
         backgroundColor: gradient,
         borderWidth: 2,
@@ -358,7 +408,7 @@ function buildChart(canvasId, points) {
       plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1a2e', titleColor: '#fff', bodyColor: '#fff', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1 } },
       scales: {
         x: { display: false },
-        y: { display: false } // Minimalist look (hides Y axis numbers)
+        y: { display: false } 
       }
     }
   });
