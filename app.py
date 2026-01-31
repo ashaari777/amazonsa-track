@@ -75,13 +75,22 @@ def init_db():
         );
     """)
 
+    # Migration & Fixes
     try:
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ip_address TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS device_name TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_paused BOOLEAN DEFAULT FALSE;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE;")
+        
+        # ONE-TIME FIX: Approve everyone currently in the DB so they aren't locked out.
+        # Future users will be set to FALSE by the register function.
+        # We assume anyone registered BEFORE this update is valid.
         cur.execute("UPDATE users SET is_approved = TRUE WHERE is_approved IS NULL")
+        
+        # Double check: Force Admin to be approved
+        cur.execute("UPDATE users SET is_approved = TRUE WHERE email = %s", (SUPER_ADMIN_EMAIL.lower(),))
+        
     except Exception as e:
         conn.rollback()
 
@@ -150,7 +159,7 @@ def login_required(fn):
         
         conn = db_conn()
         cur = conn.cursor()
-        cur.execute("SELECT is_paused, is_approved FROM users WHERE id=%s", (uid,))
+        cur.execute("SELECT email, role, is_paused, is_approved FROM users WHERE id=%s", (uid,))
         status = cur.fetchone()
         conn.close()
         
@@ -158,12 +167,20 @@ def login_required(fn):
             session.clear()
             return redirect(url_for("login"))
 
+        # 1. SUPER ADMIN BYPASS: Never block the main admin
+        if status['email'] == SUPER_ADMIN_EMAIL.lower():
+            return fn(*args, **kwargs)
+
+        # 2. Check Paused
         if status['is_paused']:
             session.clear()
             flash("Your account has been suspended.", "error")
             return redirect(url_for("login"))
             
+        # 3. Check Waitlist (Not Approved)
         if not status['is_approved']:
+            # If they are trying to access the waitlist page, let them.
+            # If they try to access anything else, send them to waitlist.
             if request.endpoint != 'waitlist_page':
                 return redirect(url_for("waitlist_page"))
             
@@ -410,6 +427,8 @@ def register():
         flash("Passwords do not match.", "error"); return redirect(url_for("register"))
     
     role = "admin" if (email == SUPER_ADMIN_EMAIL.lower()) else "user"
+    
+    # NEW LOGIC: Only the Super Admin is auto-approved. Everyone else waits.
     is_approved = True if role == "admin" else False
     
     conn = db_conn()
@@ -425,7 +444,8 @@ def register():
     if is_approved:
         flash("Account created. Please login.", "ok")
     else:
-        flash("Account created! You are on the waitlist. You will be able to access soon.", "ok")
+        # User is directed to login, where they will see the waitlist page upon logging in
+        flash("Account created! You are on the waitlist.", "ok")
         
     return redirect(url_for("login"))
 
@@ -448,7 +468,8 @@ def login():
     if user.get("is_paused"):
         conn.close(); flash("Your account has been suspended.", "error"); return redirect(url_for("login"))
 
-    if email == SUPER_ADMIN_EMAIL.lower() and user["role"] != "admin":
+    # Force Admin to be approved/admin if it matches the Super Admin Email
+    if email == SUPER_ADMIN_EMAIL.lower():
         cur.execute("UPDATE users SET role='admin', is_approved=TRUE WHERE id=%s", (user["id"],))
         conn.commit()
         user = dict(user); user["role"] = "admin"; user["is_approved"] = True
@@ -456,6 +477,8 @@ def login():
     session["user_id"] = user["id"]
     session["role"] = user["role"]
 
+    # Redirect logic happens inside login_required based on approval status, 
+    # but we handle it here explicitly to be safe.
     if not user.get("is_approved"):
         conn.close()
         return redirect(url_for("waitlist_page"))
@@ -472,6 +495,7 @@ def login():
 @app.route("/waitlist", methods=["GET"])
 @login_required
 def waitlist_page():
+    # Only show this page. All other logic is handled by login_required
     return render_template("waitlist.html")
 
 @app.route("/logout", methods=["POST"])
@@ -509,7 +533,7 @@ def reset_password(token):
 def index():
     u = current_user()
     if not u: session.clear(); return redirect(url_for("login"))
-    if not u.get('is_approved'): return redirect(url_for("waitlist_page"))
+    # is_approved check is handled by login_required now
 
     conn = db_conn()
     cur = conn.cursor()
@@ -627,10 +651,16 @@ def admin_users():
     conn = db_conn()
     cur = conn.cursor()
     status = request.args.get('status', 'all')
+    
+    # Logic: 
+    # 'all' = Active users (Approved)
+    # 'pending' = Waitlist users (Not Approved)
+    
     if status == 'pending':
         cur.execute("SELECT * FROM users WHERE is_approved = FALSE ORDER BY created_at DESC")
     else:
         cur.execute("SELECT * FROM users WHERE is_approved = TRUE ORDER BY created_at DESC")
+        
     users = cur.fetchall()
     
     cur.execute("""
@@ -694,7 +724,6 @@ def admin_user_delete(user_id):
 def admin_items():
     conn = db_conn()
     cur = conn.cursor()
-    # Update Admin view to show latest history for each item
     cur.execute("""
         SELECT i.*, u.email AS user_email,
                (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
