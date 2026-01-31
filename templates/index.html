@@ -2,109 +2,308 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Amazon.sa Tracker</title>
+  <title>Amazon Tracker Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f5f7fa; color: #333; }
-    .topbar { background: #232f3e; color: #fff; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
-    .topbar a { color: #ddd; text-decoration: none; margin-right: 15px; font-size: 0.9em; }
-    .status-badge { font-size: 0.85em; background: #37475a; padding: 4px 10px; border-radius: 4px; }
-    .container { max-width: 98%; margin: 24px auto; padding: 0 10px; }
-    .panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 24px; }
-    .msg { padding: 12px; border-radius: 6px; margin: 10px 0; font-size: 0.95em; }
-    .ok { background: #e6fffa; border: 1px solid #b2f5ea; color: #2c7a7b; }
-    .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; }
+    :root {
+        --bg: #0f0c29;
+        --sidebar-bg: #1a1a2e;
+        --card-bg: rgba(30, 30, 50, 0.6);
+        --accent: #d53369;
+        --text: #ffffff;
+        --text-muted: #8b8b9e;
+        --border: rgba(255,255,255,0.08);
+    }
     
-    .add-row { display: flex; gap: 10px; max-width: 600px; width: 100%; }
-    .add-row input { flex: 1; padding: 10px 14px; border: 1px solid #cbd5e0; border-radius: 6px; outline: none; }
-    .btn { padding: 10px 18px; border: 0; border-radius: 6px; background: #232f3e; color: #fff; font-weight: 600; cursor: pointer; }
-    .btn2 { padding: 8px 14px; border: 1px solid #cbd5e0; border-radius: 6px; background: #fff; color: #4a5568; font-weight: 600; cursor: pointer; }
-    .btn-del { color: #e53e3e; border-color: #feb2b2; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    
+    body {
+        background: var(--bg);
+        background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+        color: var(--text);
+        display: flex;
+        min-height: 100vh;
+        overflow-x: hidden;
+    }
 
-    .charts-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 16px; }
-    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 16px; display: flex; flex-direction: column; }
-    .title-area { margin-bottom: 8px; min-height: 44px; }
-    .title-text { font-weight: 700; font-size: 0.95em; color: #2d3748; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .title-text.expanded { white-space: normal; }
-    .more-link { font-size: 0.8em; color: #3182ce; cursor: pointer; background: none; border: none; padding: 0; text-decoration: underline; }
-    .price-tag { font-size: 1.1em; font-weight: 800; color: #1a202c; }
-    .discount-badge { background: #c53030; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.75em; font-weight: bold; margin-left: 6px; }
-    .meta { font-size: 0.8em; color: #718096; margin-top: 4px; }
+    /* Sidebar */
+    .sidebar {
+        width: 250px;
+        background: rgba(20, 20, 35, 0.8);
+        backdrop-filter: blur(20px);
+        border-right: 1px solid var(--border);
+        padding: 30px 20px;
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        height: 100vh;
+        z-index: 10;
+    }
     
-    .chart-container { position: relative; height: 250px; width: 100%; margin-top: 15px; }
-    .card-actions { margin-top: auto; padding-top: 12px; display: flex; justify-content: space-between; border-top: 1px solid #edf2f7; }
+    .brand { font-size: 1.4rem; font-weight: 700; margin-bottom: 40px; display: flex; align-items: center; gap: 10px; }
+    .brand-icon { width: 30px; height: 30px; background: linear-gradient(135deg, #d53369, #daae51); border-radius: 8px; }
+    
+    .nav-item {
+        display: flex;
+        align-items: center;
+        padding: 12px 15px;
+        color: var(--text-muted);
+        text-decoration: none;
+        border-radius: 12px;
+        margin-bottom: 8px;
+        transition: 0.3s;
+        font-weight: 500;
+    }
+    
+    .nav-item:hover, .nav-item.active {
+        background: rgba(255,255,255,0.05);
+        color: #fff;
+    }
+    
+    .nav-item.active { border-left: 3px solid #daae51; }
+    
+    .spacer { flex-grow: 1; }
+    
+    .user-profile {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding-top: 20px;
+        border-top: 1px solid var(--border);
+    }
+    
+    .avatar {
+        width: 40px; height: 40px;
+        background: linear-gradient(45deg, #8E2DE2, #4A00E0);
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center; font-weight: bold;
+    }
+
+    /* Main Content */
+    .main {
+        margin-left: 250px;
+        flex: 1;
+        padding: 30px 40px;
+    }
+    
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+    }
+    
+    .header h1 { font-size: 1.8rem; font-weight: 600; }
+    .last-update { font-size: 0.9rem; color: var(--text-muted); background: rgba(255,255,255,0.05); padding: 5px 12px; border-radius: 20px; }
+
+    /* Add Item Section (Styled as Dashboard Widget) */
+    .add-panel {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 25px;
+        margin-bottom: 30px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        backdrop-filter: blur(10px);
+    }
+    
+    .search-input {
+        flex: 1;
+        background: rgba(0,0,0,0.2);
+        border: 1px solid var(--border);
+        padding: 12px 20px;
+        border-radius: 12px;
+        color: #fff;
+        outline: none;
+    }
+    .search-input:focus { border-color: #daae51; }
+    
+    .btn-glow {
+        background: linear-gradient(90deg, #d53369, #daae51);
+        border: none;
+        padding: 12px 30px;
+        border-radius: 12px;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+        transition: 0.3s;
+    }
+    .btn-glow:hover { box-shadow: 0 0 15px rgba(218, 174, 81, 0.4); }
+
+    /* Grid Layout */
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 25px;
+    }
+    
+    .card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 20px;
+        transition: 0.3s;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,0.2); }
+    
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 15px;
+    }
+    
+    .item-title {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #fff;
+        text-decoration: none;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        margin-right: 10px;
+    }
+    
+    .price-block { text-align: right; }
+    .current-price { font-size: 1.4rem; font-weight: 700; color: #fff; }
+    .discount { font-size: 0.8rem; color: #4ade80; background: rgba(74, 222, 128, 0.1); padding: 2px 6px; border-radius: 4px; }
+    
+    .chart-box {
+        height: 180px;
+        width: 100%;
+        margin-top: auto;
+    }
+    
+    .card-footer {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .btn-icon { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; transition: 0.2s; }
+    .btn-icon:hover { color: #fff; }
+    .btn-delete { color: #ef4444; }
+    .btn-delete:hover { color: #f87171; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .sidebar { width: 70px; padding: 20px 10px; }
+        .sidebar span, .brand-text, .user-info { display: none; }
+        .main { margin-left: 70px; padding: 20px; }
+        .add-panel { flex-direction: column; }
+        .search-input, .btn-glow { width: 100%; }
+    }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <div style="display:flex; align-items:center; gap:10px;">
-      <strong>Amazon.sa Tracker</strong>
-      <span class="status-badge">Last Update: {{ last_global_update }}</span>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="brand">
+        <div class="brand-icon"></div>
+        <span class="brand-text">Zarss</span>
     </div>
-    <div style="display:flex; align-items:center; gap:10px;">
-      <span style="opacity:.6; font-size: 0.85em;">{{ user["email"] }}</span>
-      {% if is_admin %}
-        <a href="{{ url_for('admin_users') }}">Users</a>
-      {% endif %}
-      <form method="post" action="{{ url_for('logout') }}" style="display:inline">
-        <button class="btn2" style="background:transparent; border-color:#4a5568; color:#fff;" type="submit">Logout</button>
-      </form>
+    
+    <a href="#" class="nav-item active">
+        <span>Dashboard</span>
+    </a>
+    
+    {% if is_admin %}
+    <a href="{{ url_for('admin_users') }}" class="nav-item">
+        <span>Admin Users</span>
+    </a>
+    <a href="{{ url_for('admin_items') }}" class="nav-item">
+        <span>Admin Items</span>
+    </a>
+    {% endif %}
+    
+    <div class="spacer"></div>
+    
+    <div class="user-profile">
+        <div class="avatar">{{ user["email"][0]|upper }}</div>
+        <div class="user-info" style="overflow:hidden;">
+            <div style="font-size:0.9rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ user["email"].split('@')[0] }}</div>
+            <form method="post" action="{{ url_for('logout') }}">
+                <button type="submit" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:0.8rem;">Log Out</button>
+            </form>
+        </div>
     </div>
   </div>
 
-  <div class="container">
+  <!-- Main Content -->
+  <div class="main">
+    <div class="header">
+        <div>
+            <h1 style="margin-bottom:5px;">Dashboard</h1>
+            <span style="color:var(--text-muted);">Real-time price tracking updates</span>
+        </div>
+        <div class="last-update">Updated: {{ last_global_update }}</div>
+    </div>
+
+    <!-- Add Item Widget -->
+    <div class="add-panel">
+        <form method="post" action="{{ url_for('add') }}" style="display:flex; width:100%; gap:15px; align-items:center;">
+            <input name="item" class="search-input" placeholder="Paste Amazon.sa link or ASIN..." required />
+            <button class="btn-glow" type="submit">Track Item</button>
+        </form>
+    </div>
+
+    <!-- Messages -->
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
-        <div class="panel" style="padding:10px;">
-          {% for cat,msg in messages %}
-            <div class="msg {{cat}}">{{msg}}</div>
-          {% endfor %}
-        </div>
+        {% for cat,msg in messages %}
+          <div style="padding:15px; border-radius:12px; margin-bottom:20px; background: rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2);">{{msg}}</div>
+        {% endfor %}
       {% endif %}
     {% endwith %}
 
-    <div class="panel">
-      <h3 style="margin:0 0 15px 0;">Add Item</h3>
-      <form method="post" action="{{ url_for('add') }}" class="add-row">
-        <input name="item" placeholder="Paste ASIN or Amazon.sa URL" required />
-        <button class="btn" type="submit">Add</button>
-      </form>
-    </div>
-
+    <!-- Grid -->
     {% if not items %}
-      <div class="panel" style="text-align:center; padding: 50px;">
-        <p>No items yet. Paste an Amazon.sa URL above to get started.</p>
+      <div style="text-align:center; padding:50px; color:var(--text-muted);">
+        <h2>No items yet</h2>
+        <p>Use the bar above to add your first product.</p>
       </div>
     {% else %}
-      <div class="charts-row">
+      <div class="grid">
         {% for it in items %}
           <div class="card">
-            <div class="title-area">
-              <a href="{{ it.url }}" target="_blank" class="title-text truncated" id="title-text-{{ it.asin }}" style="text-decoration:none;">
-                {{ it.latest_name if it.latest_name else it.asin }}
-              </a>
-              <button class="more-link" onclick="toggleTitle('{{ it.asin }}', this)">More</button>
-            </div>
-            <div>
-              <span class="price-tag">{{ it.latest_price_text if it.latest_price_text else "Pending..." }}</span>
-              {% if it.latest_discount is not none %}
-                <span class="discount-badge">-{{ it.latest_discount }}%</span>
-              {% endif %}
-              <div class="meta">Last check: {{ it.latest_ts.split(' ')[1] if it.latest_ts else "-" }}</div>
+            <div class="card-header">
+                <a href="{{ it.url }}" target="_blank" class="item-title">
+                    {{ it.latest_name if it.latest_name else it.asin }}
+                </a>
+                <div class="price-block">
+                    <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
+                    {% if it.latest_discount is not none %}
+                        <span class="discount">-{{ it.latest_discount }}%</span>
+                    {% endif %}
+                </div>
             </div>
             
-            <div class="chart-container">
+            <div class="chart-box">
                 <canvas id="chart-{{ it.asin }}"></canvas>
             </div>
 
-            <div class="card-actions">
-              <form method="post" action="{{ url_for('update_one', asin=it.asin) }}">
-                <button class="btn2" type="submit">Refresh</button>
-              </form>
-              <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Delete?');">
-                <button class="btn2 btn-del" type="submit">Delete</button>
-              </form>
+            <div class="card-footer">
+                <span style="font-size:0.8rem; color:var(--text-muted);">{{ it.latest_ts.split(' ')[1] if it.latest_ts else "Just added" }}</span>
+                <div style="display:flex; gap:10px;">
+                    <form method="post" action="{{ url_for('update_one', asin=it.asin) }}">
+                        <button class="btn-icon" type="submit">Refresh</button>
+                    </form>
+                    <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Stop tracking?');">
+                        <button class="btn-icon btn-delete" type="submit">Remove</button>
+                    </form>
+                </div>
             </div>
           </div>
         {% endfor %}
@@ -113,6 +312,10 @@
   </div>
 
 <script>
+// Chart Config for Dark Theme
+Chart.defaults.color = '#8b8b9e';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
+
 async function loadHistory(asin) {
   const r = await fetch(`/history/${asin}.json`);
   return await r.json();
@@ -120,28 +323,30 @@ async function loadHistory(asin) {
 
 function buildChart(canvasId, points) {
   const ctx = document.getElementById(canvasId).getContext('2d');
-  
-  // Strict check to remove zeros from the view
   const validPoints = points.filter(p => p.price_value > 0);
   if (validPoints.length === 0) return;
 
   const labels = validPoints.map(p => p.ts ? p.ts.substring(5, 16) : "");
   const prices = validPoints.map(p => p.price_value);
 
-  // KEEPA STYLE: Stepped + Orange Fill
+  // Gradient Fill
+  const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+  gradient.addColorStop(0, 'rgba(213, 51, 105, 0.5)'); // Pink/Red top
+  gradient.addColorStop(1, 'rgba(213, 51, 105, 0)');   // Transparent bottom
+
   new Chart(ctx, {
     type: 'line',
     data: {
       labels: labels,
       datasets: [{
-        label: 'Price',
         data: prices,
-        stepped: 'before', // This makes the lines jump vertically
-        borderColor: '#FF9900', // Amazon Orange
-        backgroundColor: 'rgba(255, 153, 0, 0.2)',
+        stepped: 'before',
+        borderColor: '#d53369',
+        backgroundColor: gradient,
         borderWidth: 2,
         pointRadius: 0,
-        pointHoverRadius: 6,
+        pointHoverRadius: 4,
+        pointBackgroundColor: '#fff',
         fill: true,
         spanGaps: true
       }]
@@ -150,10 +355,10 @@ function buildChart(canvasId, points) {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1a2e', titleColor: '#fff', bodyColor: '#fff', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1 } },
       scales: {
         x: { display: false },
-        y: { display: true, position: 'right', grid: { color: '#f5f5f5' } }
+        y: { display: false } // Minimalist look (hides Y axis numbers)
       }
     }
   });
@@ -168,17 +373,6 @@ function buildChart(canvasId, points) {
     } catch (e) { console.error(e); }
   }
 })();
-
-function toggleTitle(asin, btn) {
-    const el = document.getElementById('title-text-' + asin);
-    if (el.classList.contains('expanded')) {
-        el.classList.remove('expanded');
-        btn.textContent = "More";
-    } else {
-        el.classList.add('expanded');
-        btn.textContent = "Less";
-    }
-}
 </script>
 </body>
 </html>
