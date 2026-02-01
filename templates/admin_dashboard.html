@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Admin Dashboard</title>
+  <style>
+    body { font-family: sans-serif; background: #f5f7fa; padding: 20px; }
+    .card { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+    h2 { margin-top: 0; }
+    .stat-box { display: inline-block; background: #232f3e; color: #fff; padding: 15px; border-radius: 8px; margin-right: 10px; min-width: 150px; text-align: center; }
+    .stat-num { font-size: 24px; font-weight: bold; display: block; }
+    .btn { padding: 10px 15px; background: #232f3e; color: #fff; text-decoration: none; border-radius: 5px; border: none; cursor: pointer; }
+    input { padding: 10px; width: 70%; border: 1px solid #ccc; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Admin Dashboard</h1>
+  <a href="{{ url_for('admin_users') }}" class="btn">Manage Users</a>
+  <a href="{{ url_for('admin_items') }}" class="btn">Manage Items</a>
+  <a href="{{ url_for('index') }}" class="btn">View My Tracker</a>
+  
+  <div style="margin-top: 20px;">
+      <div class="stat-box">
+          <span class="stat-num">{{ total_users }}</span> Users
+      </div>
+      <div class="stat-box">
+          <span class="stat-num">{{ total_items }}</span> Tracked Items
+      </div>
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+      <h2>📢 Global Announcement</h2>
+      <form method="post" action="{{ url_for('set_announcement') }}">
+          <input name="text" placeholder="Enter message for all users..." value="{{ announcement or '' }}">
+          <button class="btn" type="submit">Update</button>
+      </form>
+  </div>
+
+  <div class="card">
+      <h2>🔥 Top Trending Items</h2>
+      <ul>
+          {% for t in trending %}
+            <li>ASIN: <strong>{{ t.asin }}</strong> (Tracked by {{ t.c }} users)</li>
+          {% endfor %}
+      </ul>
+  </div>
+
+  <div class="card">
+      <h2>⚠️ Maintenance</h2>
+      <form method="post" action="{{ url_for('cleanup_ghosts') }}" onsubmit="return confirm('Delete items from users inactive for 90 days?');">
+          <button class="btn" style="background:#e53e3e;">Clean Ghost Items</button>
+      </form>
+  </div>
+</body>
+</html>
