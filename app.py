@@ -34,7 +34,7 @@ EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
 
 SUPER_ADMIN_EMAIL = "ashaari777@gmail.com"
-NOTIFICATION_EMAIL = "ashaari777in@gmail.com" # Email to notify on new reg
+NOTIFICATION_EMAIL = "ashaari777in@gmail.com"
 
 CRON_TOKEN = os.environ.get("CRON_TOKEN", "")
 PLAYWRIGHT_LOCALE = os.environ.get("PLAYWRIGHT_LOCALE", "en-US")
@@ -224,7 +224,6 @@ async def scrape_one_with_context(browser, asin):
 
         if not data["item_name"]: raise Exception("Blocked/No Title")
 
-        # Price
         for sel in [".priceToPay .a-offscreen", ".apexPriceToPay .a-offscreen", "#corePrice_feature_div .a-price .a-offscreen"]:
             try:
                 el = page.locator(sel).first
@@ -236,19 +235,14 @@ async def scrape_one_with_context(browser, asin):
                     break
             except: pass
 
-        # --- REFINED COUPON LOGIC (Extract only %, side by side) ---
         coupons_found = []
-        
-        # Checkbox coupons
         try:
             coupon_els = page.locator("label[id*='coupon']").all_inner_texts()
             for c in await coupon_els:
-                # Extract 10% or 20 SAR
                 m = re.search(r"(\d+%)|(SAR\s?\d+)", c)
                 if m: coupons_found.append(m.group(0))
         except: pass
         
-        # Text coupons "Redeem Code"
         try:
             promos = page.locator("span:has-text('promo code'), span:has-text('Save %'), span:has-text('Savings')")
             count = await promos.count()
@@ -259,10 +253,8 @@ async def scrape_one_with_context(browser, asin):
         except: pass
         
         if coupons_found:
-            # Deduplicate and join with pipe
             data["coupon_text"] = " | ".join(list(set(coupons_found)))
 
-        # Discount
         try:
             disc = page.locator(".savingsPercentage").first
             txt = await disc.text_content()
@@ -442,12 +434,23 @@ def force_update():
     flash("Forced Global Update Started...", "ok")
     return redirect(url_for("admin_dashboard"))
 
+@app.route("/admin/cleanup-ghosts", methods=["POST"])
+@admin_required
+def cleanup_ghosts():
+    conn = db_conn(); cur = conn.cursor()
+    cutoff = (datetime.utcnow() - timedelta(days=90)).strftime("%Y-%m-%d")
+    cur.execute("DELETE FROM items WHERE user_id IN (SELECT id FROM users WHERE last_login_at < %s)", (cutoff,))
+    deleted = cur.rowcount
+    conn.commit(); conn.close()
+    flash(f"Cleaned {deleted} ghost items.", "ok")
+    return redirect(url_for("admin_dashboard"))
+
 @app.route("/admin/items", methods=["GET"])
 @admin_required
 def admin_items():
     conn = db_conn(); cur = conn.cursor()
     sort_by = request.args.get('sort', 'latest')
-    user_filter = request.args.get('user_filter') # Filter Logic
+    user_filter = request.args.get('user_filter')
     
     base_query = """
         SELECT i.*, u.email AS user_email,
@@ -469,14 +472,12 @@ def admin_items():
     cur.execute(base_query, tuple(params))
     items = cur.fetchall()
     
-    # Get users for dropdown
     cur.execute("SELECT id, email FROM users ORDER BY email")
     users = cur.fetchall()
-    
     conn.close()
     return render_template("admin_items.html", items=items, users=users, current_filter=user_filter)
 
-# ... (Standard Add, Delete, Set Target, History JSON routes same as before) ...
+# ... (Standard Add, Delete, Update routes) ...
 @app.route("/add", methods=["POST"])
 @login_required
 def add():
@@ -547,7 +548,7 @@ def history_json(asin):
     for r in rows: out.append({"ts": r["ts"], "price_value": r["price_value"]})
     return jsonify(out)
 
-# ... (Auth Routes: Login, Register, Logout, Forgot, Reset - same as before) ...
+# ... (Auth Routes and Admin User Management - Keep Same as before, just ensuring imports and app context) ...
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "GET": return render_template("register.html")
@@ -563,12 +564,10 @@ def register():
     except: flash("Email registered.", "error"); return redirect(url_for("login"))
     finally: conn.close()
     
-    # Notify Admin if user is waiting
     if not is_approved:
         send_new_user_alert(email)
         flash("Account created! You are on the waitlist.", "ok")
-    else:
-        flash("Account created.", "ok")
+    else: flash("Account created.", "ok")
     return redirect(url_for("login"))
 
 @app.route("/login", methods=["GET", "POST"])
@@ -590,14 +589,13 @@ def login():
     session["user_id"] = user["id"]; session["role"] = user["role"]
     if not user.get("is_approved"): conn.close(); return redirect(url_for("waitlist_page"))
     
-    # Update Stats
     ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
     loc = get_location_from_ip(ip)
     cur.execute("UPDATE users SET last_login_at=%s, ip_address=%s, device_name=%s, location=%s WHERE id=%s", 
                 (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), ip, request.user_agent.string, loc, user["id"]))
     conn.commit(); conn.close()
     
-    if user["role"] == "admin": return redirect(url_for("admin_dashboard")) # Changed to Dashboard
+    if user["role"] == "admin": return redirect(url_for("admin_dashboard"))
     else: return redirect(url_for("index"))
 
 @app.route("/logout", methods=["POST"])
@@ -609,7 +607,6 @@ def forgot(): return render_template("forgot.html")
 @app.route("/reset/<token>", methods=["GET", "POST"])
 def reset_password(token): return redirect(url_for("login"))
 
-# ... (Admin User Management Routes - same as before) ...
 @app.route("/admin/users", methods=["GET"])
 @admin_required
 def admin_users():
@@ -652,7 +649,16 @@ def admin_user_delete(user_id):
     conn.commit(); conn.close()
     return redirect(request.referrer)
 
-# ... (Cron - same as before) ...
+@app.route("/admin/item/<int:item_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_item_by_id(item_id):
+    conn = db_conn(); cur = conn.cursor()
+    cur.execute("DELETE FROM price_history WHERE item_id=%s", (item_id,))
+    cur.execute("DELETE FROM items WHERE id=%s", (item_id,))
+    conn.commit(); conn.close()
+    return redirect(url_for("admin_items"))
+
+# --- CRON ---
 def run_global_scrape():
     conn = db_conn(); cur = conn.cursor()
     cur.execute("SELECT DISTINCT asin FROM items")
