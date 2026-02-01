@@ -19,7 +19,6 @@
     .muted { color: #666; font-size: 0.85em; }
     .btn-delete { background: #e53e3e; color: #fff; border:none; padding:5px 10px; border-radius:4px; cursor:pointer; font-size:0.85em; margin-left:10px; }
     
-    /* Filter Style */
     .filter-form { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
     select { padding: 8px; border-radius: 4px; border: 1px solid #ccc; }
     .btn-filter { padding: 8px 15px; background: #232f3e; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
@@ -47,7 +46,7 @@
         <select name="user_filter">
             <option value="">All Users</option>
             {% for u in users %}
-                <option value="{{ u.id }}" {{ 'selected' if current_filter == str(u.id) else '' }}>{{ u.email }}</option>
+                <option value="{{ u.id }}" {{ 'selected' if current_filter == u.id|string else '' }}>{{ u.email }}</option>
             {% endfor %}
         </select>
         <button type="submit" class="btn-filter">Filter</button>
