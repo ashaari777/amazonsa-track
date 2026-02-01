@@ -117,8 +117,10 @@
                 <div class="price-block">
                     <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
                     {% if it.coupon_text %}
-                        <div style="font-size:0.8em; color:#4ade80; margin-top:2px;">🎟️ {{ it.coupon_text[:20] }}...</div>
-                    {% endif %}
+    <div style="font-size:0.8em; color:#4ade80; background:rgba(74,222,128,0.1); padding:2px 6px; border-radius:4px; margin-top:4px; display:inline-block;" title="Coupons Available">
+        🎟️ {{ it.coupon_text }}
+    </div>
+{% endif %}
                     {% if it.latest_discount is not none %}
                         <span class="discount">-{{ it.latest_discount }}%</span>
                     {% endif %}
