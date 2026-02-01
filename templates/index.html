@@ -28,7 +28,7 @@
         overflow-x: hidden;
     }
 
-    /* --- SIDEBAR (Desktop) --- */
+    /* --- SIDEBAR --- */
     .sidebar {
         width: 250px;
         background: rgba(20, 20, 35, 0.8);
@@ -64,11 +64,7 @@
         font-weight: 500;
     }
     
-    .nav-item:hover, .nav-item.active {
-        background: rgba(255,255,255,0.05);
-        color: #fff;
-    }
-    
+    .nav-item:hover, .nav-item.active { background: rgba(255,255,255,0.05); color: #fff; }
     .nav-item.active { border-left: 3px solid #daae51; }
     .spacer { flex-grow: 1; }
     
@@ -85,23 +81,10 @@
     .logout-btn-sidebar:hover { border-color: #fff; color: #fff; }
 
     /* --- MAIN CONTENT --- */
-    .main {
-        margin-left: 250px;
-        flex: 1;
-        padding: 30px 40px;
-        width: 100%;
-    }
+    .main { margin-left: 250px; flex: 1; padding: 30px 40px; width: 100%; }
     
-    .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 30px;
-    }
-    
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
     .header h1 { font-size: 1.8rem; font-weight: 600; }
-    
-    /* Mobile Header (Hidden on Desktop) */
     .mobile-header { display: none; }
 
     /* --- ADD ITEM WIDGET --- */
@@ -121,12 +104,12 @@
         flex: 1;
         background: rgba(0,0,0,0.2);
         border: 1px solid var(--border);
-        padding: 15px 20px; /* Taller input for better touch */
+        padding: 15px 20px;
         border-radius: 12px;
         color: #fff;
         outline: none;
         font-size: 1rem;
-        min-width: 0; /* Fix flexbox shrinking */
+        min-width: 0;
     }
     .search-input:focus { border-color: #daae51; }
     
@@ -143,12 +126,8 @@
     }
     .btn-glow:hover { box-shadow: 0 0 15px rgba(218, 174, 81, 0.4); }
 
-    /* --- GRID LAYOUT --- */
-    .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-        gap: 25px;
-    }
+    /* --- GRID --- */
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 25px; }
     
     .card {
         background: var(--card-bg);
@@ -162,12 +141,7 @@
     
     .card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,0.2); }
     
-    .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 15px;
-    }
+    .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
     
     .item-title {
         font-size: 1rem;
@@ -185,11 +159,7 @@
     .current-price { font-size: 1.4rem; font-weight: 700; color: #fff; }
     .discount { font-size: 0.8rem; color: #4ade80; background: rgba(74, 222, 128, 0.1); padding: 2px 6px; border-radius: 4px; }
     
-    .chart-box {
-        height: 180px;
-        width: 100%;
-        margin-top: auto;
-    }
+    .chart-box { height: 180px; width: 100%; margin-top: auto; }
     
     .card-footer {
         margin-top: 15px;
@@ -198,26 +168,22 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 10px;
     }
     
-    .btn-icon { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; transition: 0.2s; }
-    .btn-icon:hover { color: #fff; }
-    .btn-delete { color: #ef4444; }
+    .target-form { display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.2); padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); }
+    .target-input { background: transparent; border: none; color: #fff; width: 70px; font-size: 0.9em; outline: none; }
+    .btn-set { background: transparent; border: none; color: #daae51; font-weight: 600; cursor: pointer; font-size: 0.8em; }
+    
+    .btn-delete { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.9rem; transition: 0.2s; }
     .btn-delete:hover { color: #f87171; }
 
-    /* --- MOBILE RESPONSIVENESS --- */
+    /* Mobile */
     @media (max-width: 768px) {
-        /* Hide Sidebar */
         .sidebar { display: none; }
-        
-        /* Reset Main Content Margins */
         .main { margin-left: 0; padding: 15px; }
-        
-        /* Hide Dashboard Title on Mobile */
         .header h1 { display: none; }
-        .header .last-update { display: none; } /* Optional: Hide update time to save space */
-        
-        /* Show Mobile Header */
+        .header .last-update { display: none; }
         .mobile-header {
             display: flex;
             justify-content: space-between;
@@ -226,90 +192,48 @@
             padding-bottom: 15px;
             border-bottom: 1px solid var(--border);
         }
-        .mobile-user { font-weight: 600; font-size: 0.9rem; }
-        .mobile-logout {
-            background: rgba(255,255,255,0.1);
-            color: #fff;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            cursor: pointer;
-        }
-
-        /* Fix Search Bar Sizing */
-        .add-panel {
-            flex-direction: column; /* Stack input and button */
-            padding: 15px;
-            gap: 10px;
-        }
-        .search-input { width: 100%; }
-        .btn-glow { width: 100%; padding: 12px; }
-        
-        /* Adjust Grid for Mobile */
+        .add-panel { flex-direction: column; padding: 15px; gap: 10px; }
+        .search-input, .btn-glow { width: 100%; }
         .grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
 
-  <!-- Sidebar (Desktop Only) -->
   <div class="sidebar">
-    <!-- User Email at Top (Requested) -->
-    <div class="user-email-top">
-        {{ user["email"] }}
-    </div>
-    
-    <a href="#" class="nav-item active">
-        <span>Dashboard</span>
-    </a>
-    
+    <div class="user-email-top">{{ user["email"] }}</div>
+    <a href="#" class="nav-item active"><span>Dashboard</span></a>
     {% if is_admin %}
-    <a href="{{ url_for('admin_users') }}" class="nav-item">
-        <span>Admin Users</span>
-    </a>
-    <a href="{{ url_for('admin_items') }}" class="nav-item">
-        <span>Admin Items</span>
-    </a>
+    <a href="{{ url_for('admin_users') }}" class="nav-item"><span>Admin Users</span></a>
+    <a href="{{ url_for('admin_items') }}" class="nav-item"><span>Admin Items</span></a>
     {% endif %}
-    
     <div class="spacer"></div>
-    
     <form method="post" action="{{ url_for('logout') }}">
         <button type="submit" class="logout-btn-sidebar">Log Out</button>
     </form>
   </div>
 
-  <!-- Main Content -->
   <div class="main">
-    <!-- Mobile Header (Visible only on Mobile) -->
     <div class="mobile-header">
         <div class="mobile-user">{{ user["email"] }}</div>
         <form method="post" action="{{ url_for('logout') }}">
-            <button class="mobile-logout">Log Out</button>
+            <button style="background:rgba(255,255,255,0.1); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:pointer;">Log Out</button>
         </form>
     </div>
 
-    <!-- Desktop Header -->
     <div class="header">
-        <div>
-            <h1>Dashboard</h1>
-            <span style="color:var(--text-muted); display:none;">Real-time updates</span> <!-- Hidden subtitle -->
-        </div>
+        <div><h1>Dashboard</h1></div>
         <div class="last-update" style="color:var(--text-muted); font-size:0.85em;">Updated: {{ last_global_update }}</div>
     </div>
 
-    
     <!-- Add Item Widget -->
     <div class="add-panel">
         <form method="post" action="{{ url_for('add') }}" style="display:flex; width:100%; gap:15px; align-items:center; flex-wrap:wrap;">
-            <input name="item" class="search-input" placeholder="Paste Amazon.sa link or ASIN..." required style="flex:2;" />
-            <input name="target_price" class="search-input" type="number" step="0.01" placeholder="Target Price (SAR)" style="flex:1;" />
+            <input name="item" class="search-input" placeholder="Paste Amazon.sa link or ASIN..." required />
             <button class="btn-glow" type="submit">Add</button>
         </form>
     </div>
 
-    <!-- Messages -->
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for cat,msg in messages %}
@@ -318,7 +242,6 @@
       {% endif %}
     {% endwith %}
 
-    <!-- Grid -->
     {% if not items %}
       <div style="text-align:center; padding:50px; color:var(--text-muted);">
         <h2>No items yet</h2>
@@ -333,14 +256,11 @@
                     {{ it.latest_name if it.latest_name else it.asin }}
                 </a>
                 <div class="price-block">
-        <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
-        {% if it.target_price %}
-            <div style="font-size:0.8rem; color:#daae51;">Target: {{ it.target_price }}</div>
-        {% endif %}
-        {% if it.latest_discount is not none %}
-            <span class="discount">-{{ it.latest_discount }}%</span>
-        {% endif %}
-    </div>
+                    <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
+                    {% if it.latest_discount is not none %}
+                        <span class="discount">-{{ it.latest_discount }}%</span>
+                    {% endif %}
+                </div>
             </div>
             
             <div class="chart-box">
@@ -348,15 +268,15 @@
             </div>
 
             <div class="card-footer">
-                <span style="font-size:0.8rem; color:var(--text-muted);">{{ it.latest_ts.split(' ')[1] if it.latest_ts else "Just added" }}</span>
-                <div style="display:flex; gap:10px;">
-                    <form method="post" action="{{ url_for('update_one', asin=it.asin) }}">
-                        <button class="btn-icon" type="submit">Refresh</button>
-                    </form>
-                    <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Stop tracking?');">
-                        <button class="btn-icon btn-delete" type="submit">Remove</button>
-                    </form>
-                </div>
+                <form method="post" action="{{ url_for('set_target_price', item_id=it.id) }}" class="target-form">
+                    <span style="font-size:0.8em; color:#888;">Target:</span>
+                    <input type="number" name="target_price" class="target-input" value="{{ it.target_price if it.target_price else '' }}" placeholder="Set">
+                    <button class="btn-set" type="submit">Save</button>
+                </form>
+
+                <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Stop tracking?');">
+                    <button class="btn-delete" type="submit">Remove</button>
+                </form>
             </div>
           </div>
         {% endfor %}
@@ -365,7 +285,6 @@
   </div>
 
 <script>
-// Chart Config for Dark Theme
 Chart.defaults.color = '#8b8b9e';
 Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
 
@@ -376,15 +295,12 @@ async function loadHistory(asin) {
 
 function buildChart(canvasId, points) {
   const ctx = document.getElementById(canvasId).getContext('2d');
-  
-  // Filter out 0s/nulls to avoid lines dropping to floor
   const validPoints = points.filter(p => p.price_value > 0);
   if (validPoints.length === 0) return;
 
   const labels = validPoints.map(p => p.ts ? p.ts.substring(5, 16) : "");
   const prices = validPoints.map(p => p.price_value);
 
-  // Gradient Fill
   const gradient = ctx.createLinearGradient(0, 0, 0, 400);
   gradient.addColorStop(0, 'rgba(213, 51, 105, 0.5)'); 
   gradient.addColorStop(1, 'rgba(213, 51, 105, 0)');   
@@ -395,7 +311,7 @@ function buildChart(canvasId, points) {
       labels: labels,
       datasets: [{
         data: prices,
-        stepped: 'before', // Keepa-style steps
+        stepped: 'before',
         borderColor: '#d53369',
         backgroundColor: gradient,
         borderWidth: 2,
@@ -411,10 +327,7 @@ function buildChart(canvasId, points) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1a2e', titleColor: '#fff', bodyColor: '#fff', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1 } },
-      scales: {
-        x: { display: false },
-        y: { display: false } 
-      }
+      scales: { x: { display: false }, y: { display: false } }
     }
   });
 }
