@@ -299,11 +299,13 @@
         <div class="last-update" style="color:var(--text-muted); font-size:0.85em;">Updated: {{ last_global_update }}</div>
     </div>
 
+    
     <!-- Add Item Widget -->
     <div class="add-panel">
         <form method="post" action="{{ url_for('add') }}" style="display:flex; width:100%; gap:15px; align-items:center; flex-wrap:wrap;">
-            <input name="item" class="search-input" placeholder="Paste Amazon.sa link or ASIN..." required />
-            <button class="btn-glow" type="submit">Add</button> <!-- Changed Text to 'Add' -->
+            <input name="item" class="search-input" placeholder="Paste Amazon.sa link or ASIN..." required style="flex:2;" />
+            <input name="target_price" class="search-input" type="number" step="0.01" placeholder="Target Price (SAR)" style="flex:1;" />
+            <button class="btn-glow" type="submit">Add</button>
         </form>
     </div>
 
@@ -331,11 +333,14 @@
                     {{ it.latest_name if it.latest_name else it.asin }}
                 </a>
                 <div class="price-block">
-                    <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
-                    {% if it.latest_discount is not none %}
-                        <span class="discount">-{{ it.latest_discount }}%</span>
-                    {% endif %}
-                </div>
+        <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
+        {% if it.target_price %}
+            <div style="font-size:0.8rem; color:#daae51;">Target: {{ it.target_price }}</div>
+        {% endif %}
+        {% if it.latest_discount is not none %}
+            <span class="discount">-{{ it.latest_discount }}%</span>
+        {% endif %}
+    </div>
             </div>
             
             <div class="chart-box">
