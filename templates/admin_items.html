@@ -6,20 +6,20 @@
   <style>
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f5f7fa; padding: 20px; color: #333; }
     .panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; }
-    
-    /* Top Navigation Bar */
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
     .nav-links a { text-decoration: none; color: #555; margin-right: 15px; font-weight: 600; padding: 5px 10px; border-radius: 4px; }
     .nav-links a.active { background: #232f3e; color: #fff; }
     .nav-links a:hover { background: #e2e8f0; color: #111; }
-    
     .btn-logout { background: transparent; border: 1px solid #ccc; color: #555; padding: 5px 10px; border-radius: 4px; cursor:pointer; }
-
+    
     table { width: 100%; border-collapse: collapse; }
     th { text-align: left; background: #232f3e; color: #fff; padding: 12px; font-size: 0.9em; }
+    th a { color: #fff; text-decoration: none; display: flex; align-items: center; gap: 5px; }
+    th a:hover { text-decoration: underline; }
     td { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.9em; }
     a { color: #2b6cb0; text-decoration: none; }
     .muted { color: #666; font-size: 0.85em; }
+    .btn-delete { background: #e53e3e; color: #fff; border:none; padding:5px 10px; border-radius:4px; cursor:pointer; font-size:0.85em; margin-left:10px; }
   </style>
 </head>
 <body>
@@ -40,7 +40,14 @@
     <h2>All Tracked Items</h2>
     <table>
       <thead>
-        <tr><th>User</th><th>ASIN</th><th>Title</th><th>Latest Price</th><th>Last Update</th><th>Link</th></tr>
+        <tr>
+            <th><a href="{{ url_for('admin_items', sort='az_user') }}">User <span>&#8693;</span></a></th>
+            <th>ASIN</th>
+            <th><a href="{{ url_for('admin_items', sort='az_title') }}">Title <span>&#8693;</span></a></th>
+            <th><a href="{{ url_for('admin_items', sort='price') }}">Latest Price <span>&#8693;</span></a></th>
+            <th>Last Update</th>
+            <th>Actions</th>
+        </tr>
       </thead>
       <tbody>
         {% for it in items %}
@@ -52,7 +59,12 @@
             </td>
             <td><strong>{{ it["latest_price_text"] if it["latest_price_text"] else "-" }}</strong></td>
             <td class="muted">{{ it["latest_ts"] if it["latest_ts"] else "-" }}</td>
-            <td><a href="{{ it['url'] }}" target="_blank" rel="noopener">Open</a></td>
+            <td>
+                <a href="{{ it['url'] }}" target="_blank" rel="noopener">Open</a>
+                <form method="post" action="{{ url_for('admin_delete_item_by_id', item_id=it['id']) }}" style="display:inline;" onsubmit="return confirm('Delete this item from this user?');">
+                    <button class="btn-delete" type="submit">Delete</button>
+                </form>
+            </td>
           </tr>
         {% endfor %}
       </tbody>
