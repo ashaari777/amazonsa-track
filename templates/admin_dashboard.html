@@ -11,6 +11,8 @@
     .stat-num { font-size: 24px; font-weight: bold; display: block; }
     .btn { padding: 10px 15px; background: #232f3e; color: #fff; text-decoration: none; border-radius: 5px; border: none; cursor: pointer; }
     input { padding: 10px; width: 70%; border: 1px solid #ccc; border-radius: 5px; }
+    
+    .sidebar-actions { margin-top: 20px; padding: 20px; background: #e2e8f0; border-radius: 8px; }
   </style>
 </head>
 <body>
@@ -26,6 +28,15 @@
       <div class="stat-box">
           <span class="stat-num">{{ total_items }}</span> Tracked Items
       </div>
+  </div>
+  
+  <!-- Force Update Button -->
+  <div class="sidebar-actions">
+      <h3>System Actions</h3>
+      <form method="post" action="{{ url_for('force_update') }}">
+          <button class="btn" style="background: #d53369;">🚀 Force Global Update Now</button>
+      </form>
+      <p style="font-size:0.8em; color:#666;">Triggers immediate scrape of all items.</p>
   </div>
 
   <div class="card" style="margin-top: 20px;">
