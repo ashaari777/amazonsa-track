@@ -13,6 +13,7 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import (
@@ -28,22 +29,14 @@ from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
-
-# DATABASE
 DATABASE_URL = os.environ.get("DATABASE_URL")
-
-# EMAIL CONFIG
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
 
-# SETTINGS
 SUPER_ADMIN_EMAIL = "ashaari777@gmail.com"
-ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
-RESET_MODE = os.environ.get("RESET_MODE", "manual").strip().lower()
 CRON_TOKEN = os.environ.get("CRON_TOKEN", "")
 PLAYWRIGHT_LOCALE = os.environ.get("PLAYWRIGHT_LOCALE", "en-US")
 PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "20000")) 
-PLAYWRIGHT_NAV_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_NAV_TIMEOUT_MS", "60000"))
 BLOCK_HEAVY_RESOURCES = os.environ.get("BLOCK_HEAVY_RESOURCES", "1") == "1"
 
 USER_AGENTS = [
@@ -117,6 +110,7 @@ def init_db():
             item_name TEXT,
             price_text TEXT,
             price_value REAL,
+            coupon_text TEXT,
             rating REAL,
             reviews_count INTEGER,
             discount_percent INTEGER,
@@ -124,6 +118,10 @@ def init_db():
             FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
         );
     """)
+    
+    try:
+        cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS coupon_text TEXT;")
+    except: pass
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS password_resets (
@@ -159,7 +157,6 @@ def send_alert_email(to_email, asin, item_name, price):
     """
 
     msg = MIMEMultipart()
-    from email.utils import formataddr
     msg['From'] = formataddr(("Zarss Tracker (No Reply)", EMAIL_USER))
     msg['To'] = to_email
     msg['Subject'] = subject
@@ -284,7 +281,7 @@ async def scrape_one_with_context(browser, asin):
 
     page = await context.new_page()
     await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
-    page.set_default_timeout(PLAYWRIGHT_TIMEOUT_MS)
+    page.set_default_timeout(20000)
     
     url = canonical_url(asin)
     error_msg = None
@@ -294,18 +291,49 @@ async def scrape_one_with_context(browser, asin):
     rating = None
     reviews_count = None
     discount_percent = None
+    coupon_text = None
 
     try:
         await page.goto(url, wait_until="domcontentloaded")
-        try: await wait_for_any_title_async(page, timeout_ms=PLAYWRIGHT_TIMEOUT_MS)
+        try: await wait_for_any_title_async(page, timeout_ms=20000)
         except:
             await auto_nudge_async(page)
-            await wait_for_any_title_async(page, timeout_ms=PLAYWRIGHT_TIMEOUT_MS)
+            await wait_for_any_title_async(page, timeout_ms=20000)
 
         item_name = await pick_first_text_async(page, ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"])
-        price = await pick_first_text_async(page, [".priceToPay .a-offscreen", ".apexPriceToPay .a-offscreen", "#corePrice_feature_div .a-price .a-offscreen", "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen"])
+        price = await pick_first_text_async(page, [
+            ".priceToPay .a-offscreen",
+            ".apexPriceToPay .a-offscreen", 
+            "#corePrice_feature_div .a-price .a-offscreen",
+            "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen"
+        ])
         
         if not item_name: raise Exception("Amazon blocked request (No title)")
+
+        # --- ENHANCED COUPON SCRAPING ---
+        # 1. Standard Checkbox Coupon
+        try:
+            coupon_el = page.locator("label[id*='coupon']").first
+            txt = await coupon_el.text_content()
+            if txt: coupon_text = txt.strip()
+        except: pass
+        
+        # 2. Text-based Promo Codes (found in your screenshot)
+        if not coupon_text:
+            try:
+                # Look for elements containing "promo code" or "Save" + "%"
+                # This selector looks for spans containing specific keywords
+                promos = page.locator("span:has-text('promo code'), span:has-text('Save %'), span:has-text('Savings')")
+                count = await promos.count()
+                
+                # Iterate and pick the most relevant one (usually the first valid one)
+                for i in range(count):
+                    txt = await promos.nth(i).text_content()
+                    txt = clean(txt)
+                    if txt and len(txt) > 5 and len(txt) < 100: # Sanity check length
+                        coupon_text = txt
+                        break 
+            except: pass
 
         try:
             rating_text = await page.locator("#acrPopover").first.get_attribute("title")
@@ -337,6 +365,7 @@ async def scrape_one_with_context(browser, asin):
         "asin": asin, "url": url, 
         "item_name": item_name, "price_text": price, "price_value": price_val,
         "rating": rating, "reviews_count": reviews_count, "discount_percent": discount_percent,
+        "coupon_text": coupon_text, # ADDED COUPON
         "error": error_msg
     }
 
@@ -385,16 +414,21 @@ def write_history_for_item(item_id: int, data: dict):
                  diff = now_dt - last_dt
                  if diff.total_seconds() < 3600:
                      should_insert = False
-                     cur.execute("UPDATE price_history SET ts=%s WHERE id=%s", (data.get("timestamp"), latest["id"]))
+                     # Update timestamp AND coupon info if price is same
+                     cur.execute("""
+                        UPDATE price_history 
+                        SET ts=%s, coupon_text=%s 
+                        WHERE id=%s
+                     """, (data.get("timestamp"), data.get("coupon_text"), latest["id"]))
                      conn.commit()
              except: should_insert = True
 
     if should_insert:
         cur.execute("""
             INSERT INTO price_history(
-                item_id, ts, item_name, price_text, price_value, rating, reviews_count, discount_percent, error
-            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (item_id, data.get("timestamp"), data.get("item_name"), data.get("price_text"), data.get("price_value"), data.get("rating"), data.get("reviews_count"), data.get("discount_percent"), data.get("error")))
+                item_id, ts, item_name, price_text, price_value, coupon_text, rating, reviews_count, discount_percent, error
+            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (item_id, data.get("timestamp"), data.get("item_name"), data.get("price_text"), data.get("price_value"), data.get("coupon_text"), data.get("rating"), data.get("reviews_count"), data.get("discount_percent"), data.get("error")))
         conn.commit()
     conn.close()
 
@@ -424,8 +458,10 @@ def register():
         flash("Email and password are required.", "error"); return redirect(url_for("register"))
     if password != password2:
         flash("Passwords do not match.", "error"); return redirect(url_for("register"))
+    
     role = "admin" if (email == SUPER_ADMIN_EMAIL.lower()) else "user"
     is_approved = True if role == "admin" else False
+    
     conn = db_conn(); cur = conn.cursor()
     try:
         cur.execute("INSERT INTO users(email, password_hash, role, created_at, is_approved) VALUES(%s, %s, %s, %s, %s)", 
@@ -434,6 +470,7 @@ def register():
     except psycopg2.IntegrityError:
         flash("This email is already registered. Please login.", "error"); return redirect(url_for("login"))
     finally: conn.close()
+    
     if is_approved: flash("Account created. Please login.", "ok")
     else: flash("Account created! You are on the waitlist.", "ok")
     return redirect(url_for("login"))
@@ -525,6 +562,7 @@ def index():
             "latest_name": latest["item_name"] if latest and latest["item_name"] else None,
             "latest_price_text": display_price,
             "latest_discount": latest["discount_percent"] if latest else None,
+            "coupon_text": latest["coupon_text"] if latest else None, # PASS COUPON
             "latest_ts": latest["ts"] if latest else None,
         })
     conn.close()
@@ -538,7 +576,6 @@ def add():
     asin = extract_asin(raw)
     if not asin: flash("Invalid ASIN.", "error"); return redirect(url_for("index"))
     conn = db_conn(); cur = conn.cursor()
-    # REVERTED: Just insert item, target price is handled separately now
     cur.execute("INSERT INTO items(user_id, asin, url, created_at) VALUES(%s, %s, %s, %s) ON CONFLICT (user_id, asin) DO NOTHING", 
                (u["id"], asin, canonical_url(asin), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit(); conn.close()
@@ -550,18 +587,13 @@ def set_target_price(item_id):
     u = current_user()
     target_val = request.form.get("target_price")
     conn = db_conn(); cur = conn.cursor()
-    
-    # Ensure item belongs to user
     cur.execute("SELECT id FROM items WHERE id=%s AND user_id=%s", (item_id, u["id"]))
-    if not cur.fetchone():
-        conn.close(); flash("Error.", "error"); return redirect(url_for("index"))
-        
+    if not cur.fetchone(): conn.close(); return redirect(url_for("index"))
     try:
         new_target = float(target_val) if target_val else None
         cur.execute("UPDATE items SET target_price=%s WHERE id=%s", (new_target, item_id))
         conn.commit()
     except: pass
-    
     conn.close()
     return redirect(url_for("index"))
 
@@ -670,13 +702,11 @@ def admin_items():
     conn = db_conn(); cur = conn.cursor()
     sort_by = request.args.get('sort', 'latest')
     
-    # Sorting Logic
     order_clause = "ORDER BY i.created_at DESC"
     if sort_by == 'az_title': order_clause = "ORDER BY latest_name ASC"
     elif sort_by == 'az_user': order_clause = "ORDER BY u.email ASC"
     elif sort_by == 'price': order_clause = "ORDER BY latest_price_value DESC"
 
-    # Query with Subqueries for sorting fields
     query = f"""
         SELECT i.*, u.email AS user_email,
                (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
@@ -686,7 +716,6 @@ def admin_items():
         FROM items i JOIN users u ON u.id=i.user_id 
         {order_clause}
     """
-    
     cur.execute(query)
     rows = cur.fetchall()
     conn.close()
@@ -711,31 +740,20 @@ def run_global_scrape():
     if not asins: conn.close(); return
     results = run_async(scrape_many_sequential_with_delays, asins)
     for asin, data in results.items():
-        # Get Item + Target info to check for alerts
-        cur.execute("""
-            SELECT i.id, i.target_price, i.last_alert_sent, u.email 
-            FROM items i 
-            JOIN users u ON i.user_id = u.id 
-            WHERE i.asin = %s
-        """, (asin,))
+        cur.execute("SELECT i.id, i.target_price, i.last_alert_sent, u.email FROM items i JOIN users u ON i.user_id = u.id WHERE i.asin = %s", (asin,))
         item_rows = cur.fetchall()
-        
         for r in item_rows:
-            item_id = r["id"]
-            write_history_for_item(item_id, data)
-            
-            # Check Alert
+            write_history_for_item(r["id"], data)
             current_price = data.get("price_value")
             if current_price and r["target_price"] and current_price <= r["target_price"]:
                 should_alert = True
                 if r["last_alert_sent"]:
                     try:
-                        last_alert_dt = datetime.strptime(r["last_alert_sent"], "%Y-%m-%d %H:%M:%S")
-                        if (datetime.utcnow() - last_alert_dt).total_seconds() < 86400: should_alert = False
+                        if (datetime.utcnow() - datetime.strptime(r["last_alert_sent"], "%Y-%m-%d %H:%M:%S")).total_seconds() < 86400: should_alert = False
                     except: pass
                 if should_alert:
                     send_alert_email(r["email"], asin, data.get("item_name"), current_price)
-                    cur.execute("UPDATE items SET last_alert_sent=%s WHERE id=%s", (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), item_id))
+                    cur.execute("UPDATE items SET last_alert_sent=%s WHERE id=%s", (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), r["id"]))
                     conn.commit()
     conn.close()
 
