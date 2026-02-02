@@ -161,20 +161,22 @@
     
     .chart-box { height: 180px; width: 100%; margin-top: auto; }
     
-    /* Footer for Chart Tooltip */
+    /* Footer for Chart Tooltip (Keepa Style) */
     .chart-info {
         font-size: 0.85em; 
         color: #daae51; 
-        text-align: center; 
+        text-align: left; 
         height: 20px; 
         margin-top: 5px;
         font-weight: 600;
         min-height: 20px;
+        border-top: 1px solid rgba(255,255,255,0.1);
+        padding-top: 5px;
     }
 
     .card-footer {
-        margin-top: 15px;
-        padding-top: 15px;
+        margin-top: 10px;
+        padding-top: 10px;
         border-top: 1px solid var(--border);
         display: flex;
         justify-content: space-between;
@@ -274,144 +276,15 @@
                 <div class="price-block">
                     <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
                     {% if it.coupon_text %}
-                        <div style="font-size:0.8em; color:#4ade80; margin-top:2px;">🎟️ {{ it.coupon_text }}</div>
+                        <div style="font-size:0.8em; color:#4ade80; margin-top:2px;" title="{{ it.coupon_text }}">🎟️ Coupon</div>
                     {% endif %}
                     {% if it.latest_discount is not none %}
                         <span class="discount">-{{ it.latest_discount }}%</span>
                     {% endif %}
+                    {% if it.is_lowest %}
+                        <div style="font-size:0.8em; color:#f59e0b;">🔥 Low</div>
+                    {% endif %}
                 </div>
             </div>
             
-            <div class="chart-box">
-                <canvas id="chart-{{ it.asin }}"></canvas>
-            </div>
-            <!-- Dynamic Footer -->
-            <div id="info-{{ it.asin }}" class="chart-info"></div>
-
-            <div class="card-footer">
-                <form method="post" action="{{ url_for('set_target_price', item_id=it.id) }}" class="target-form">
-                    <span style="font-size:0.8em; color:#888;">Target:</span>
-                    <input type="number" name="target_price" class="target-input" value="{{ it.target_price if it.target_price else '' }}" placeholder="Set">
-                    <button class="btn-set" type="submit">💾</button>
-                </form>
-
-                <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Stop tracking?');">
-                    <button class="btn-delete" type="submit">Delete</button>
-                </form>
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-    {% endif %}
-  </div>
-
-<script>
-Chart.defaults.color = '#8b8b9e';
-Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
-
-// FORCE FRESH DATA with timestamp
-async function loadHistory(asin) {
-  const r = await fetch(`/history/${asin}.json?t=${new Date().getTime()}`);
-  return await r.json();
-}
-
-function buildChart(canvasId, points, asin) {
-  const ctx = document.getElementById(canvasId).getContext('2d');
-  const infoDiv = document.getElementById('info-' + asin);
-  
-  // 1. Filter out absolute zeros
-  let validPoints = points.filter(p => p.price_value !== null && p.price_value > 0);
-
-  // 2. Fallback: If no valid points, chart is empty
-  if (validPoints.length === 0) {
-      // Optional: Add a "No Data" label
-      return;
-  }
-
-  // 3. Keepa Style: Extend last price to "Now"
-  // If the last point is old, add a fake point for "Now" with the same price
-  // to make the line stretch to the right side of the chart.
-  const lastPoint = validPoints[validPoints.length - 1];
-  const now = new Date();
-  const lastDate = new Date(lastPoint.ts);
-  
-  // If last point is older than 1 hour, add a "current" point
-  if ((now - lastDate) > 1000 * 60 * 60) {
-      validPoints.push({
-          ts: now.toISOString().replace('T', ' ').substring(0, 19),
-          price_value: lastPoint.price_value
-      });
-  }
-
-  const labels = validPoints.map(p => p.ts);
-  const prices = validPoints.map(p => p.price_value);
-
-  const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-  gradient.addColorStop(0, 'rgba(213, 51, 105, 0.5)'); 
-  gradient.addColorStop(1, 'rgba(213, 51, 105, 0)');   
-
-  new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [{
-        data: prices,
-        stepped: 'before',
-        borderColor: '#d53369',
-        backgroundColor: gradient,
-        borderWidth: 2,
-        pointRadius: 0, // Keep 0 to look like a clean line
-        pointHoverRadius: 6,
-        pointBackgroundColor: '#fff',
-        fill: true,
-        spanGaps: true
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: {
-        mode: 'index',
-        intersect: false,
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-            enabled: false, 
-            external: function(context) {
-                const tooltip = context.tooltip;
-                if (tooltip.opacity === 0) {
-                    // Don't clear, keep last known value or clear? 
-                    // infoDiv.innerText = ""; 
-                    return;
-                }
-                const dateStr = tooltip.dataPoints[0].label;
-                const price = tooltip.dataPoints[0].raw;
-                
-                // Parse Date safely
-                const d = new Date(dateStr.replace(" ", "T") + "Z"); // Treat as UTC
-                
-                const dateFmt = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-                const timeFmt = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute:'2-digit' });
-                
-                infoDiv.innerText = `${dateFmt} ${timeFmt} • SAR ${price}`;
-            }
-        }
-      },
-      scales: { x: { display: false }, y: { display: false } }
-    }
-  });
-}
-
-(async () => {
-  const asins = {{ items|map(attribute="asin")|list|tojson }};
-  for (const asin of asins) {
-    try {
-      const points = await loadHistory(asin);
-      buildChart(`chart-${asin}`, points, asin);
-    } catch (e) { console.error(e); }
-  }
-})();
-</script>
-</body>
-</html>
+            <div class="cha
