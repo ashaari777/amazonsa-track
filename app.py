@@ -126,7 +126,7 @@ except: pass
 def send_email(to, subject, body):
     if not EMAIL_USER or not EMAIL_PASS: return
     msg = MIMEMultipart()
-    msg['From'] = formataddr(("Zarss Tracker", EMAIL_USER))
+    msg['From'] = formataddr(("Zarss Tracker (No Reply)", EMAIL_USER))
     msg['To'] = to
     msg['Subject'] = subject
     msg.add_header('Reply-To', 'no-reply@gmail.com')
@@ -275,20 +275,54 @@ async def scrape_one_with_context(browser, asin):
 
     return data
 
-async def scrape_many(asins):
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-        results = {}
-        for i, asin in enumerate(asins):
-            if i > 0: await asyncio.sleep(random.uniform(2.0, 5.0))
-            results[asin] = await scrape_one_with_context(browser, asin)
-        await browser.close()
-        return results
+# --- MEMORY OPTIMIZED SCRAPER (BATCHING) ---
+async def scrape_many_sequential_with_delays(asins):
+    results = {}
+    BATCH_SIZE = 4 # Scrape 4 items then restart browser to free RAM
+    
+    # Helper to chunk list
+    def chunked(l, n):
+        for i in range(0, len(l), n): yield l[i:i + n]
+
+    for batch in chunked(asins, BATCH_SIZE):
+        try:
+            # Launch fresh browser for every batch
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True, 
+                    args=[
+                        "--no-sandbox", 
+                        "--disable-dev-shm-usage", 
+                        "--disable-gpu", 
+                        "--disable-extensions",
+                        "--disable-setuid-sandbox"
+                    ]
+                )
+                
+                for asin in batch:
+                    # Random delay between items in batch
+                    await asyncio.sleep(random.uniform(2.0, 5.0))
+                    results[asin] = await scrape_one_with_context(browser, asin)
+                
+                await browser.close()
+                
+        except Exception as e:
+            print(f"Batch failed: {e}")
+            
+    return results
 
 def run_async(coro, *args):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro(*args))
+    try: asyncio.get_running_loop(); running = True
+    except RuntimeError: running = False
+    if not running: return asyncio.run(coro(*args, **kwargs))
+    def worker(out):
+        try: out["result"] = asyncio.run(coro(*args))
+        except Exception as e: out["error"] = e
+    out = {"result": None, "error": None}
+    t = threading.Thread(target=worker, args=(out,), daemon=True)
+    t.start(); t.join()
+    if out["error"]: raise out["error"]
+    return out["result"]
 
 # ---------------- DB Write ----------------
 
@@ -459,7 +493,6 @@ def admin_items():
                (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
         FROM items i JOIN users u ON u.id=i.user_id 
     """
-    
     params = []
     if user_filter:
         base_query += " WHERE u.id = %s "
@@ -471,13 +504,11 @@ def admin_items():
 
     cur.execute(base_query, tuple(params))
     items = cur.fetchall()
-    
     cur.execute("SELECT id, email FROM users ORDER BY email")
     users = cur.fetchall()
     conn.close()
     return render_template("admin_items.html", items=items, users=users, current_filter=user_filter)
 
-# ... (Standard Add, Delete, Update routes) ...
 @app.route("/add", methods=["POST"])
 @login_required
 def add():
@@ -528,7 +559,7 @@ def update_one(asin):
     cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (u, asin))
     row = cur.fetchone(); conn.close()
     if row:
-        results = run_async(scrape_many, [asin])
+        results = run_async(scrape_many_sequential_with_delays, [asin])
         if results.get(asin): write_history(row["id"], results[asin])
         flash("Updated.", "ok")
     return redirect(url_for("index"))
@@ -664,7 +695,7 @@ def run_global_scrape():
     cur.execute("SELECT DISTINCT asin FROM items")
     asins = [r['asin'] for r in cur.fetchall()]
     conn.close()
-    results = run_async(scrape_many, asins)
+    results = run_async(scrape_many_sequential_with_delays, asins)
     conn = db_conn(); cur = conn.cursor()
     for asin, data in results.items():
         cur.execute("SELECT i.id, i.target_price, u.email FROM items i JOIN users u ON i.user_id=u.id WHERE i.asin=%s", (asin,))
