@@ -278,15 +278,13 @@ async def scrape_one_with_context(browser, asin):
 # --- MEMORY OPTIMIZED SCRAPER (BATCHING) ---
 async def scrape_many_sequential_with_delays(asins):
     results = {}
-    BATCH_SIZE = 4 # Scrape 4 items then restart browser to free RAM
+    BATCH_SIZE = 4 
     
-    # Helper to chunk list
     def chunked(l, n):
         for i in range(0, len(l), n): yield l[i:i + n]
 
     for batch in chunked(asins, BATCH_SIZE):
         try:
-            # Launch fresh browser for every batch
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
                     headless=True, 
@@ -300,7 +298,6 @@ async def scrape_many_sequential_with_delays(asins):
                 )
                 
                 for asin in batch:
-                    # Random delay between items in batch
                     await asyncio.sleep(random.uniform(2.0, 5.0))
                     results[asin] = await scrape_one_with_context(browser, asin)
                 
@@ -311,12 +308,12 @@ async def scrape_many_sequential_with_delays(asins):
             
     return results
 
-def run_async(coro, *args):
+def run_async(coro, *args, **kwargs):
     try: asyncio.get_running_loop(); running = True
     except RuntimeError: running = False
     if not running: return asyncio.run(coro(*args, **kwargs))
     def worker(out):
-        try: out["result"] = asyncio.run(coro(*args))
+        try: out["result"] = asyncio.run(coro(*args, **kwargs))
         except Exception as e: out["error"] = e
     out = {"result": None, "error": None}
     t = threading.Thread(target=worker, args=(out,), daemon=True)
@@ -579,7 +576,7 @@ def history_json(asin):
     for r in rows: out.append({"ts": r["ts"], "price_value": r["price_value"]})
     return jsonify(out)
 
-# ... (Auth Routes and Admin User Management - Keep Same as before, just ensuring imports and app context) ...
+# ... (Auth Routes) ...
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "GET": return render_template("register.html")
@@ -594,7 +591,6 @@ def register():
         conn.commit()
     except: flash("Email registered.", "error"); return redirect(url_for("login"))
     finally: conn.close()
-    
     if not is_approved:
         send_new_user_alert(email)
         flash("Account created! You are on the waitlist.", "ok")
@@ -611,21 +607,17 @@ def login():
     user = cur.fetchone()
     if not user or not check_password_hash(user["password_hash"], password):
         conn.close(); flash("Invalid credentials.", "error"); return redirect(url_for("login"))
-    
     if email == SUPER_ADMIN_EMAIL.lower():
         cur.execute("UPDATE users SET role='admin', is_approved=TRUE WHERE id=%s", (user["id"],))
         conn.commit()
         user = dict(user); user["role"]="admin"; user["is_approved"]=True
-
     session["user_id"] = user["id"]; session["role"] = user["role"]
     if not user.get("is_approved"): conn.close(); return redirect(url_for("waitlist_page"))
-    
     ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
     loc = get_location_from_ip(ip)
     cur.execute("UPDATE users SET last_login_at=%s, ip_address=%s, device_name=%s, location=%s WHERE id=%s", 
                 (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), ip, request.user_agent.string, loc, user["id"]))
     conn.commit(); conn.close()
-    
     if user["role"] == "admin": return redirect(url_for("admin_dashboard"))
     else: return redirect(url_for("index"))
 
@@ -638,6 +630,7 @@ def forgot(): return render_template("forgot.html")
 @app.route("/reset/<token>", methods=["GET", "POST"])
 def reset_password(token): return redirect(url_for("login"))
 
+# ... (Admin User Management) ...
 @app.route("/admin/users", methods=["GET"])
 @admin_required
 def admin_users():
