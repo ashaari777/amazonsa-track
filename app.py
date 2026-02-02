@@ -299,7 +299,7 @@ def write_history_for_item(item_id: int, data: dict):
             last = datetime.strptime(str(latest["ts"]), "%Y-%m-%d %H:%M:%S")
             diff = (datetime.utcnow() - last).total_seconds()
             
-            if diff < interval_sec:
+            if False: # Force insert every time for debugging
                 insert = False
                 # Just update timestamp if within interval
                 print(f"DEBUG: Updating existing row for {item_id} (Diff: {diff}s)")
