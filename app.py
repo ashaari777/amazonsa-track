@@ -10,7 +10,10 @@ import asyncio
 import threading
 import random
 import requests
-# import smtplib  <-- Disabled for now to prevent crashes
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import (
@@ -38,12 +41,15 @@ PLAYWRIGHT_LOCALE = os.environ.get("PLAYWRIGHT_LOCALE", "en-US")
 PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "20000")) 
 BLOCK_HEAVY_RESOURCES = os.environ.get("BLOCK_HEAVY_RESOURCES", "1") == "1"
 
+# DISABLE EMAIL ON FREE TIER TO PREVENT CRASHES
+ENABLE_EMAIL = False 
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 ]
 
-# GLOBAL LOCK to prevent duplicate scrapes
+# GLOBAL LOCK
 SCRAPE_LOCK = threading.Lock()
 
 # ---------------- DB helpers ----------------
@@ -58,77 +64,17 @@ def db_conn():
 def init_db():
     conn = db_conn()
     cur = conn.cursor()
-    
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            email TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'user',
-            created_at TEXT NOT NULL,
-            last_login_at TEXT,
-            ip_address TEXT,
-            device_name TEXT,
-            location TEXT,
-            is_paused BOOLEAN DEFAULT FALSE,
-            is_approved BOOLEAN DEFAULT FALSE,
-            item_limit INTEGER DEFAULT 20
-        );
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS items (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            asin TEXT NOT NULL,
-            url TEXT NOT NULL,
-            target_price REAL,
-            last_alert_sent TEXT,
-            created_at TEXT NOT NULL,
-            UNIQUE(user_id, asin),
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS price_history (
-            id SERIAL PRIMARY KEY,
-            item_id INTEGER NOT NULL,
-            ts TEXT NOT NULL,
-            item_name TEXT,
-            price_text TEXT,
-            price_value REAL,
-            coupon_text TEXT,
-            rating REAL,
-            reviews_count INTEGER,
-            discount_percent INTEGER,
-            error TEXT,
-            FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
-        );
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS system_settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        );
-    """)
-
-    conn.commit()
-    conn.close()
+    # Schema setup (kept concise for brevity, assumes tables exist or creates them)
+    cur.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, role TEXT DEFAULT 'user', created_at TEXT, last_login_at TEXT, ip_address TEXT, device_name TEXT, location TEXT, is_paused BOOLEAN DEFAULT FALSE, is_approved BOOLEAN DEFAULT FALSE, item_limit INTEGER DEFAULT 20);")
+    cur.execute("CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, user_id INTEGER, asin TEXT, url TEXT, target_price REAL, last_alert_sent TEXT, created_at TEXT, UNIQUE(user_id, asin), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);")
+    cur.execute("CREATE TABLE IF NOT EXISTS price_history (id SERIAL PRIMARY KEY, item_id INTEGER, ts TEXT, item_name TEXT, price_text TEXT, price_value REAL, coupon_text TEXT, rating REAL, reviews_count INTEGER, discount_percent INTEGER, error TEXT, FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE);")
+    cur.execute("CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT);")
+    conn.commit(); conn.close()
 
 try: init_db()
 except: pass
 
-# ---------------- Email Helper (DISABLED FOR FREE TIER) ----------------
-
-def send_alert_email(to_email, asin, item_name, price, is_coupon=False):
-    # EMAIL IS DISABLED to prevent crash on Render Free Tier
-    print(f"Skipping Email Alert for {to_email} (SMTP blocked on free tier)")
-    pass
-
-def send_new_user_alert(new_user_email):
-    pass
+# ---------------- Helpers ----------------
 
 def get_setting(key, default=None):
     try:
@@ -138,32 +84,43 @@ def get_setting(key, default=None):
         return row['value'] if row else default
     except: return default
 
-# ---------------- Scraping ----------------
+def send_alert_email(to_email, asin, item_name, price, is_coupon=False):
+    if not ENABLE_EMAIL: return
+    # (Email logic hidden for stability)
+    pass
 
-async def pick_first_text_async(page, selectors):
-    for sel in selectors:
-        try:
-            loc = page.locator(sel).first
-            txt = await loc.text_content()
-            txt = clean(txt)
-            if txt: return txt
-        except: pass
-    return None
+def send_new_user_alert(new_user_email):
+    if not ENABLE_EMAIL: return
+    pass
 
-async def wait_for_any_title_async(page, timeout_ms=8000):
-    selectors = ["#productTitle", "h1 span", "h1", "[data-cy='title-recipe']"]
-    for sel in selectors:
-        try:
-            await page.wait_for_selector(sel, timeout=timeout_ms)
-            return
-        except: pass
-    raise TimeoutError("Title not found")
-
-async def auto_nudge_async(page):
+def get_location_from_ip(ip):
     try:
-        await page.evaluate("window.scrollTo(0, 500)")
-        await page.wait_for_timeout(200)
+        r = requests.get(f"http://ip-api.com/json/{ip}", timeout=3); data = r.json()
+        if data['status'] == 'success': return f"{data.get('city')}, {data.get('country')}"
     except: pass
+    return "Unknown"
+
+def clean(t): return re.sub(r"\s+", " ", t).strip() if t else None
+def extract_asin(text):
+    text = text.strip()
+    if re.fullmatch(r"[A-Z0-9]{10}", text): return text
+    m = re.search(r"/dp/([A-Z0-9]{10})", text)
+    return m.group(1) if m else None
+def canonical_url(asin): return f"https://www.amazon.sa/dp/{asin}"
+def parse_money_value(t):
+    if not t: return None
+    m = re.search(r"([\d,]+(?:\.\d+)?)", t)
+    return float(m.group(1).replace(",", "")) if m else None
+def first_number(t):
+    if not t: return None
+    m = re.search(r"([\d.]+)", t)
+    return float(m.group(1)) if m else None
+def first_int_like(t):
+    if not t: return None
+    m = re.search(r"([\d,]+)", t)
+    return int(m.group(1).replace(",", "")) if m else None
+
+# ---------------- Scraping ----------------
 
 async def scrape_one_with_context(browser, asin):
     ua = random.choice(USER_AGENTS)
@@ -178,28 +135,24 @@ async def scrape_one_with_context(browser, asin):
     await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9,ar;q=0.8"})
     page.set_default_timeout(20000)
     
-    url = f"https://www.amazon.sa/dp/{asin}"
     data = {
         "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        "asin": asin, "url": url, "error": None,
-        "item_name": None, "price_text": None, "price_value": None,
+        "asin": asin, "error": None, "item_name": None, "price_text": None, "price_value": None,
         "coupon_text": None, "discount_percent": None
     }
 
     try:
-        await page.goto(url, wait_until="domcontentloaded")
+        await page.goto(f"https://www.amazon.sa/dp/{asin}", wait_until="domcontentloaded")
         try: 
             await page.wait_for_selector("#productTitle", timeout=10000)
-            el = page.locator("#productTitle").first
-            data["item_name"] = (await el.text_content()).strip()
+            data["item_name"] = (await page.locator("#productTitle").first.text_content()).strip()
         except: pass
 
-        if not data["item_name"]: raise Exception("Blocked/No Title")
+        if not data["item_name"]: raise Exception("Blocked")
 
         for sel in [".priceToPay .a-offscreen", ".apexPriceToPay .a-offscreen", "#corePrice_feature_div .a-price .a-offscreen", "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen"]:
             try:
-                el = page.locator(sel).first
-                txt = await el.text_content()
+                txt = await page.locator(sel).first.text_content()
                 if txt:
                     data["price_text"] = txt.strip()
                     m = re.search(r"([\d,]+(?:\.\d+)?)", txt)
@@ -207,26 +160,26 @@ async def scrape_one_with_context(browser, asin):
                     break
             except: pass
 
-        coupons_found = []
+        coupons = []
         try:
-            coupon_els = page.locator("label[id*='coupon']").all_inner_texts()
-            for c in await coupon_els:
+            els = page.locator("label[id*='coupon']").all_inner_texts()
+            for c in await els:
                 m = re.search(r"(\d+%)|(SAR\s?\d+)", c)
-                if m: coupons_found.append(m.group(0))
+                if m: coupons.append(m.group(0))
         except: pass
+        
         try:
             promos = page.locator("span:has-text('promo code'), span:has-text('Save %'), span:has-text('Savings')")
             count = await promos.count()
             for i in range(count):
                 txt = await promos.nth(i).text_content()
                 m = re.search(r"(\d+%)|(SAR\s?\d+)", txt)
-                if m: coupons_found.append(m.group(0))
+                if m: coupons.append(m.group(0))
         except: pass
-        if coupons_found: data["coupon_text"] = " | ".join(list(set(coupons_found)))
+        if coupons: data["coupon_text"] = " | ".join(list(set(coupons)))
 
         try:
-            disc = page.locator(".savingsPercentage").first
-            txt = await disc.text_content()
+            txt = await page.locator(".savingsPercentage").first.text_content()
             if txt:
                 m = re.search(r"(\d{1,3})\s*%", txt)
                 if m: data["discount_percent"] = int(m.group(1))
@@ -234,9 +187,7 @@ async def scrape_one_with_context(browser, asin):
 
     except Exception as e: data["error"] = str(e)
     finally:
-        try: await page.close()
-        except: pass
-        try: await context.close()
+        try: await page.close(); await context.close()
         except: pass
 
     if data["price_value"] and data["price_value"] < 1: data["price_value"] = None
@@ -249,13 +200,12 @@ async def scrape_many_sequential_with_delays(asins):
     BATCH_SIZE = 4 
     def chunked(l, n):
         for i in range(0, len(l), n): yield l[i:i + n]
-
     for batch in chunked(asins, BATCH_SIZE):
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
                     headless=True, 
-                    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--disable-setuid-sandbox"]
+                    args=["--no-sandbox", "--disable-dev-shm-usage"]
                 )
                 for asin in batch:
                     print(f"Scraping {asin}...") 
@@ -263,7 +213,6 @@ async def scrape_many_sequential_with_delays(asins):
                     results[asin] = await scrape_one_with_context(browser, asin)
                 await browser.close()
         except Exception as e: print(f"Batch failed: {e}")
-            
     return results
 
 def run_async(coro, *args):
@@ -279,19 +228,16 @@ def run_async(coro, *args):
     if out["error"]: raise out["error"]
     return out["result"]
 
-# ---------------- DB Write Logic ----------------
+# ---------------- DB Write Logic (FIXED: 1 Hour Rule) ----------------
 
-def write_history_for_item(item_id: int, data: dict):
-    new_price = data.get("price_value")
-    if not new_price or new_price <= 0: return
-
-    conn = db_conn()
-    cur = conn.cursor()
+def write_history(item_id, data):
+    if not data["price_value"]: return
+    conn = db_conn(); cur = conn.cursor()
     cur.execute("SELECT * FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1", (item_id,))
     latest = cur.fetchone()
     
-    interval_str = get_setting('update_interval', '14400')
-    interval_sec = int(interval_str)
+    # HARDCODED 1 HOUR INTERVAL (3600 Seconds)
+    INTERVAL_SEC = 3600 
 
     insert = True
     if latest:
@@ -299,20 +245,17 @@ def write_history_for_item(item_id: int, data: dict):
             last = datetime.strptime(str(latest["ts"]), "%Y-%m-%d %H:%M:%S")
             diff = (datetime.utcnow() - last).total_seconds()
             
-            if diff < interval_sec:
+            if diff < INTERVAL_SEC:
                 insert = False
-                # Just update timestamp if within interval
-                print(f"DEBUG: Updating existing row for {item_id} (Diff: {diff}s)")
+                # Just update the timestamp to show it was checked
                 cur.execute("UPDATE price_history SET ts=%s, coupon_text=%s WHERE id=%s", (data["timestamp"], data["coupon_text"], latest["id"]))
                 conn.commit()
 
     if insert:
-        print(f"DEBUG: INSERTING NEW ROW for {item_id}")
         cur.execute("""
-            INSERT INTO price_history(
-                item_id, ts, item_name, price_text, price_value, coupon_text, rating, reviews_count, discount_percent, error
-            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (item_id, data.get("timestamp"), data.get("item_name"), data.get("price_text"), data.get("price_value"), data.get("coupon_text"), data.get("rating"), data.get("reviews_count"), data.get("discount_percent"), data.get("error")))
+            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, error) 
+            VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (item_id, data["timestamp"], data["item_name"], data["price_text"], data["price_value"], data["coupon_text"], data["discount_percent"], data["error"]))
         conn.commit()
     conn.close()
 
@@ -361,37 +304,23 @@ def get_location_from_ip(ip):
 def index():
     conn = db_conn(); cur = conn.cursor()
     uid = session.get("user_id")
-    
-    cur.execute("SELECT is_approved FROM users WHERE id=%s", (uid,))
-    if not cur.fetchone()['is_approved']: return redirect(url_for("waitlist_page"))
-
+    if not cur.execute("SELECT is_approved FROM users WHERE id=%s", (uid,)) and not cur.fetchone()['is_approved']: return redirect(url_for("waitlist_page"))
     cur.execute("SELECT * FROM items WHERE user_id=%s ORDER BY created_at DESC", (uid,))
     items = cur.fetchall()
-    
     announcement = get_setting('announcement')
-    
     cur.execute("SELECT MAX(ts) as last_run FROM price_history")
     lr = cur.fetchone(); last_update = lr['last_run'] if lr and lr['last_run'] else "Pending..."
-
     enriched = []
     for it in items:
-        cur.execute("""
-            SELECT ph.* FROM price_history ph JOIN items i ON ph.item_id = i.id 
-            WHERE i.asin = %s ORDER BY ph.ts DESC LIMIT 1
-        """, (it["asin"],))
+        # Get absolute latest
+        cur.execute("SELECT * FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1", (it["id"],))
         latest = cur.fetchone()
         
         is_lowest = False
         if latest and latest['price_value']:
-            cur.execute("""
-                SELECT MIN(ph.price_value) as min_p 
-                FROM price_history ph JOIN items i ON ph.item_id = i.id 
-                WHERE i.asin = %s AND ph.price_value > 0
-            """, (it["asin"],))
+            cur.execute("SELECT MIN(ph.price_value) as min_p FROM price_history ph JOIN items i ON ph.item_id = i.id WHERE i.asin = %s AND ph.price_value > 0", (it["asin"],))
             min_row = cur.fetchone()
-            if min_row and min_row['min_p'] and latest['price_value'] <= min_row['min_p']:
-                is_lowest = True
-
+            if min_row and min_row['min_p'] and latest['price_value'] <= min_row['min_p']: is_lowest = True
         enriched.append({
             "id": it["id"], "asin": it["asin"], "url": it["url"], "target_price": it["target_price"],
             "latest_name": latest["item_name"] if latest else None,
@@ -403,8 +332,7 @@ def index():
             "is_lowest": is_lowest
         })
     conn.close()
-    return render_template("index.html", user={"email": "User"}, items=enriched, 
-                           announcement=announcement, is_admin=(session.get("role")=="admin"), last_global_update=last_update)
+    return render_template("index.html", user={"email": "User"}, items=enriched, announcement=announcement, is_admin=(session.get("role")=="admin"), last_global_update=last_update)
 
 @app.route("/admin/dashboard")
 @admin_required
@@ -415,9 +343,13 @@ def admin_dashboard():
     cur.execute("SELECT asin, COUNT(*) as c FROM items GROUP BY asin ORDER BY c DESC LIMIT 5")
     trending = cur.fetchall()
     announcement = get_setting('announcement')
-    interval = get_setting('update_interval', '14400')
+    
+    # Pass Last Run for Countdown
+    cur.execute("SELECT MAX(ts) as last_run FROM price_history")
+    lr = cur.fetchone(); last_run = lr['last_run'] if lr else None
+    
     conn.close()
-    return render_template("admin_dashboard.html", total_users=total_users, total_items=total_items, trending=trending, announcement=announcement, interval=interval)
+    return render_template("admin_dashboard.html", total_users=total_users, total_items=total_items, trending=trending, announcement=announcement, last_run=last_run)
 
 @app.route("/admin/set-announcement", methods=["POST"])
 @admin_required
@@ -429,25 +361,13 @@ def set_announcement():
     flash("Announcement updated", "ok")
     return redirect(url_for("admin_dashboard"))
 
-@app.route("/admin/settings/interval", methods=["POST"])
-@admin_required
-def set_update_interval():
-    val = request.form.get("interval") 
-    conn = db_conn(); cur = conn.cursor()
-    cur.execute("INSERT INTO system_settings (key, value) VALUES ('update_interval', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (val,))
-    conn.commit(); conn.close()
-    flash(f"Update interval set to {int(val)//60} minutes.", "ok")
-    return redirect(url_for("admin_dashboard"))
-
 @app.route("/admin/force-update", methods=["POST"])
 @admin_required
 def force_update():
-    # Only start if not already running
     if not SCRAPE_LOCK.locked():
         threading.Thread(target=run_global_scrape).start()
         flash("Forced Global Update Started...", "ok")
-    else:
-        flash("Update already running!", "error")
+    else: flash("Update already running!", "error")
     return redirect(url_for("admin_dashboard"))
 
 @app.route("/admin/cleanup-ghosts", methods=["POST"])
@@ -456,9 +376,8 @@ def cleanup_ghosts():
     conn = db_conn(); cur = conn.cursor()
     cutoff = (datetime.utcnow() - timedelta(days=90)).strftime("%Y-%m-%d")
     cur.execute("DELETE FROM items WHERE user_id IN (SELECT id FROM users WHERE last_login_at < %s)", (cutoff,))
-    deleted = cur.rowcount
     conn.commit(); conn.close()
-    flash(f"Cleaned {deleted} ghost items.", "ok")
+    flash(f"Cleaned ghost items.", "ok")
     return redirect(url_for("admin_dashboard"))
 
 @app.route("/admin/items", methods=["GET"])
@@ -467,11 +386,14 @@ def admin_items():
     conn = db_conn(); cur = conn.cursor()
     sort_by = request.args.get('sort', 'latest')
     user_filter = request.args.get('user_filter')
+    
+    # FIXED: Query now explicitly fetches the latest data per item correctly
     base_query = """
         SELECT i.*, u.email AS user_email,
-               (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
-               (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text,
-               (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
+               (SELECT item_name FROM price_history WHERE item_id=i.id ORDER BY ts DESC LIMIT 1) AS latest_name,
+               (SELECT price_text FROM price_history WHERE item_id=i.id ORDER BY ts DESC LIMIT 1) AS latest_price_text,
+               (SELECT price_value FROM price_history WHERE item_id=i.id ORDER BY ts DESC LIMIT 1) AS latest_price_value,
+               (SELECT ts FROM price_history WHERE item_id=i.id ORDER BY ts DESC LIMIT 1) AS latest_ts
         FROM items i JOIN users u ON u.id=i.user_id 
     """
     params = []
@@ -481,6 +403,7 @@ def admin_items():
     if sort_by == 'az_title': base_query += " ORDER BY latest_name ASC"
     elif sort_by == 'az_user': base_query += " ORDER BY u.email ASC"
     else: base_query += " ORDER BY i.created_at DESC"
+
     cur.execute(base_query, tuple(params))
     items = cur.fetchall()
     cur.execute("SELECT id, email FROM users ORDER BY email")
@@ -488,6 +411,7 @@ def admin_items():
     conn.close()
     return render_template("admin_items.html", items=items, users=users, current_filter=user_filter)
 
+# ... (Add, Delete, Set Target, Update, History routes same as before) ...
 @app.route("/add", methods=["POST"])
 @login_required
 def add():
@@ -547,18 +471,19 @@ def update_one(asin):
 @login_required
 def history_json(asin):
     conn = db_conn(); cur = conn.cursor()
+    # FETCH ALL VALID HISTORY (for Keepa chart)
     cur.execute("""
-        SELECT ph.ts, ph.item_name, ph.price_value, ph.price_text, ph.discount_percent
+        SELECT ph.ts, ph.price_value
         FROM price_history ph JOIN items i ON ph.item_id = i.id
         WHERE i.asin = %s AND ph.price_value IS NOT NULL AND ph.price_value > 0
-        ORDER BY ph.ts ASC LIMIT 200
+        ORDER BY ph.ts ASC
     """, (asin,))
     rows = cur.fetchall(); conn.close()
     out = []
     for r in rows: out.append({"ts": r["ts"], "price_value": r["price_value"]})
     return jsonify(out)
 
-# ... (Auth Routes) ...
+# ... (Auth & Admin Users Routes) ...
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "GET": return render_template("register.html")
@@ -573,9 +498,7 @@ def register():
         conn.commit()
     except: flash("Email registered.", "error"); return redirect(url_for("login"))
     finally: conn.close()
-    if not is_approved:
-        send_new_user_alert(email)
-        flash("Account created! You are on the waitlist.", "ok")
+    if not is_approved: send_new_user_alert(email); flash("Account created! You are on the waitlist.", "ok")
     else: flash("Account created.", "ok")
     return redirect(url_for("login"))
 
@@ -612,7 +535,6 @@ def forgot(): return render_template("forgot.html")
 @app.route("/reset/<token>", methods=["GET", "POST"])
 def reset_password(token): return redirect(url_for("login"))
 
-# ... (Admin Routes) ...
 @app.route("/admin/users", methods=["GET"])
 @admin_required
 def admin_users():
@@ -648,41 +570,27 @@ def admin_user_delete(user_id):
 def admin_delete_item_by_id(item_id):
     conn = db_conn(); cur = conn.cursor(); cur.execute("DELETE FROM price_history WHERE item_id=%s", (item_id,)); cur.execute("DELETE FROM items WHERE id=%s", (item_id,)); conn.commit(); conn.close(); return redirect(url_for("admin_items"))
 
-# --- CRON (With Lock & No Email) ---
+# --- CRON ---
 def run_global_scrape():
-    # Attempt to acquire lock. If locked, skip.
-    if not SCRAPE_LOCK.acquire(blocking=False):
-        print("Scrape already running. Skipping.")
-        return
-
+    if not SCRAPE_LOCK.acquire(blocking=False): return
     try:
         conn = db_conn(); cur = conn.cursor()
         cur.execute("SELECT DISTINCT asin FROM items")
-        rows = cur.fetchall()
-        asins = [r['asin'] for r in rows]
+        asins = [r['asin'] for r in cur.fetchall()]
         conn.close()
-
-        if not asins: return
-
         results = run_async(scrape_many_sequential_with_delays, asins)
-
         conn = db_conn(); cur = conn.cursor()
         for asin, data in results.items():
             cur.execute("SELECT i.id, i.target_price, u.email FROM items i JOIN users u ON i.user_id=u.id WHERE i.asin=%s", (asin,))
             for item in cur.fetchall():
                 write_history(item['id'], data)
-                # EMAIL LOGIC DISABLED HERE
         conn.close()
-        print(f"Scrape Finished: {len(asins)} items.")
-    finally:
-        SCRAPE_LOCK.release() # ALWAYS release lock
+    finally: SCRAPE_LOCK.release()
 
 @app.route("/cron/update-all", methods=["GET", "POST", "HEAD"])
 def cron():
     token = request.args.get("token")
     if token != CRON_TOKEN: return "401", 401
-    
-    # Start thread
     threading.Thread(target=run_global_scrape).start()
     return "OK", 200
 
