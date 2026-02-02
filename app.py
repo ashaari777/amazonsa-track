@@ -281,9 +281,12 @@ def run_async(coro, *args):
 
 # ---------------- DB Write Logic ----------------
 
-def write_history(item_id, data):
-    if not data["price_value"]: return
-    conn = db_conn(); cur = conn.cursor()
+def write_history_for_item(item_id: int, data: dict):
+    new_price = data.get("price_value")
+    if not new_price or new_price <= 0: return
+
+    conn = db_conn()
+    cur = conn.cursor()
     cur.execute("SELECT * FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1", (item_id,))
     latest = cur.fetchone()
     
@@ -294,16 +297,22 @@ def write_history(item_id, data):
     if latest:
         if latest["price_value"] == data["price_value"]:
             last = datetime.strptime(str(latest["ts"]), "%Y-%m-%d %H:%M:%S")
-            if (datetime.utcnow() - last).total_seconds() < interval_sec:
+            diff = (datetime.utcnow() - last).total_seconds()
+            
+            if diff < interval_sec:
                 insert = False
+                # Just update timestamp if within interval
+                print(f"DEBUG: Updating existing row for {item_id} (Diff: {diff}s)")
                 cur.execute("UPDATE price_history SET ts=%s, coupon_text=%s WHERE id=%s", (data["timestamp"], data["coupon_text"], latest["id"]))
                 conn.commit()
 
     if insert:
+        print(f"DEBUG: INSERTING NEW ROW for {item_id}")
         cur.execute("""
-            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, error) 
-            VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (item_id, data["timestamp"], data["item_name"], data["price_text"], data["price_value"], data["coupon_text"], data["discount_percent"], data["error"]))
+            INSERT INTO price_history(
+                item_id, ts, item_name, price_text, price_value, coupon_text, rating, reviews_count, discount_percent, error
+            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (item_id, data.get("timestamp"), data.get("item_name"), data.get("price_text"), data.get("price_value"), data.get("coupon_text"), data.get("rating"), data.get("reviews_count"), data.get("discount_percent"), data.get("error")))
         conn.commit()
     conn.close()
 
