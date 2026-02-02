@@ -319,8 +319,29 @@ function buildChart(canvasId, points, asin) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   const infoDiv = document.getElementById('info-' + asin);
   
-  const validPoints = points.filter(p => p.price_value > 0);
-  if (validPoints.length === 0) return;
+  // 1. Filter out absolute zeros
+  let validPoints = points.filter(p => p.price_value !== null && p.price_value > 0);
+
+  // 2. Fallback: If no valid points, chart is empty
+  if (validPoints.length === 0) {
+      // Optional: Add a "No Data" label
+      return;
+  }
+
+  // 3. Keepa Style: Extend last price to "Now"
+  // If the last point is old, add a fake point for "Now" with the same price
+  // to make the line stretch to the right side of the chart.
+  const lastPoint = validPoints[validPoints.length - 1];
+  const now = new Date();
+  const lastDate = new Date(lastPoint.ts);
+  
+  // If last point is older than 1 hour, add a "current" point
+  if ((now - lastDate) > 1000 * 60 * 60) {
+      validPoints.push({
+          ts: now.toISOString().replace('T', ' ').substring(0, 19),
+          price_value: lastPoint.price_value
+      });
+  }
 
   const labels = validPoints.map(p => p.ts);
   const prices = validPoints.map(p => p.price_value);
@@ -339,7 +360,7 @@ function buildChart(canvasId, points, asin) {
         borderColor: '#d53369',
         backgroundColor: gradient,
         borderWidth: 2,
-        pointRadius: 0,
+        pointRadius: 0, // Keep 0 to look like a clean line
         pointHoverRadius: 6,
         pointBackgroundColor: '#fff',
         fill: true,
@@ -360,14 +381,15 @@ function buildChart(canvasId, points, asin) {
             external: function(context) {
                 const tooltip = context.tooltip;
                 if (tooltip.opacity === 0) {
-                    infoDiv.innerText = "";
+                    // Don't clear, keep last known value or clear? 
+                    // infoDiv.innerText = ""; 
                     return;
                 }
                 const dateStr = tooltip.dataPoints[0].label;
                 const price = tooltip.dataPoints[0].raw;
-                // Parse UTC string and convert to Locale String
-                // Assuming DB returns UTC "YYYY-MM-DD HH:MM:SS"
-                const d = new Date(dateStr + " UTC"); 
+                
+                // Parse Date safely
+                const d = new Date(dateStr.replace(" ", "T") + "Z"); // Treat as UTC
                 
                 const dateFmt = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
                 const timeFmt = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute:'2-digit' });
