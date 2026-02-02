@@ -15,6 +15,8 @@
     .stat-num { font-size: 2rem; font-weight: bold; color: #d53369; }
     input, select { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 10px; border-radius: 6px; }
     .btn { background: #d53369; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
+    
+    .countdown-box { font-size:1.5rem; font-weight:bold; color:#4ade80; margin-top:10px; }
   </style>
 </head>
 <body>
@@ -35,6 +37,13 @@
 <div class="main">
   <h1>Admin Dashboard</h1>
   
+  <!-- Next Update Countdown -->
+  <div class="card">
+      <h3>⏳ Next Auto-Update In:</h3>
+      <div id="countdown" class="countdown-box">Calculated...</div>
+      <p style="color:#888; font-size:0.8em; margin-top:5px;">Last Update: {{ last_run if last_run else 'Never' }}</p>
+  </div>
+  
   <div style="display:flex; gap:20px; margin-bottom:30px;">
       <div class="card" style="flex:1;">
           <div class="stat-num">{{ total_users }}</div>
@@ -46,22 +55,9 @@
       </div>
   </div>
   
-  <!-- Force Update -->
   <div class="card">
       <form method="post" action="{{ url_for('force_update') }}">
           <button class="btn" style="width:100%;">🚀 Force Global Update Now</button>
-      </form>
-  </div>
-
-  <div class="card">
-      <h3>⚙️ Update Interval</h3>
-      <p style="color:#888; font-size:0.9em;">Controls how often data points are recorded.</p>
-      <form method="post" action="{{ url_for('set_update_interval') }}" style="display:flex; gap:10px; align-items:center;">
-          <select name="interval">
-              <option value="14400" {{ 'selected' if interval == '14400' else '' }}>Every 4 Hours (Standard)</option>
-              <option value="600" {{ 'selected' if interval == '600' else '' }}>Every 10 Minutes (High Speed)</option>
-          </select>
-          <button class="btn" type="submit">Save</button>
       </form>
   </div>
 
@@ -81,14 +77,33 @@
           {% endfor %}
       </ul>
   </div>
-  
-  <div class="card">
-      <h3>⚠️ Maintenance</h3>
-      <form method="post" action="{{ url_for('cleanup_ghosts') }}" onsubmit="return confirm('Delete items from users inactive for 90 days?');">
-          <button class="btn" style="background:#e53e3e;">Clean Ghost Items</button>
-      </form>
-  </div>
 </div>
+
+<script>
+// Countdown Logic
+const lastRunStr = "{{ last_run }}"; // YYYY-MM-DD HH:MM:SS
+if (lastRunStr && lastRunStr !== 'None') {
+    // Parse Date (Assume UTC as stored in DB)
+    const lastRun = new Date(lastRunStr.replace(" ", "T") + "Z");
+    const nextRun = new Date(lastRun.getTime() + (60 * 60 * 1000)); // +1 Hour
+
+    setInterval(() => {
+        const now = new Date();
+        const diff = nextRun - now;
+        
+        if (diff <= 0) {
+            document.getElementById("countdown").innerText = "Update Pending / Running...";
+            document.getElementById("countdown").style.color = "#fbbf24";
+        } else {
+            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            const s = Math.floor((diff % (1000 * 60)) / 1000);
+            document.getElementById("countdown").innerText = `${m}m ${s}s`;
+        }
+    }, 1000);
+} else {
+    document.getElementById("countdown").innerText = "Waiting for first update...";
+}
+</script>
 
 </body>
 </html>
