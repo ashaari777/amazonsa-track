@@ -161,7 +161,7 @@
     
     .chart-box { height: 180px; width: 100%; margin-top: auto; }
     
-    /* Footer for Chart Tooltip (Keepa Style) */
+    /* Footer for Chart Tooltip */
     .chart-info {
         font-size: 0.85em; 
         color: #daae51; 
@@ -276,7 +276,7 @@
                 <div class="price-block">
                     <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
                     {% if it.coupon_text %}
-                        <div style="font-size:0.8em; color:#4ade80; margin-top:2px;" title="{{ it.coupon_text }}">🎟️ Coupon</div>
+                        <div style="font-size:0.8em; color:#4ade80; margin-top:2px;">🎟️ {{ it.coupon_text }}</div>
                     {% endif %}
                     {% if it.latest_discount is not none %}
                         <span class="discount">-{{ it.latest_discount }}%</span>
@@ -287,4 +287,171 @@
                 </div>
             </div>
             
-            <div class="cha
+            <div class="chart-box">
+                <canvas id="chart-{{ it.asin }}"></canvas>
+            </div>
+            <!-- Custom Tooltip Footer -->
+            <div id="info-{{ it.asin }}" class="chart-info"></div>
+
+            <div class="card-footer">
+                <form method="post" action="{{ url_for('set_target_price', item_id=it.id) }}" class="target-form">
+                    <span style="font-size:0.8em; color:#888;">Target:</span>
+                    <input type="number" name="target_price" class="target-input" value="{{ it.target_price if it.target_price else '' }}" placeholder="Set">
+                    <button class="btn-set" type="submit">💾</button>
+                </form>
+
+                <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Stop tracking?');">
+                    <button class="btn-delete" type="submit">Delete</button>
+                </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+<script>
+Chart.defaults.color = '#8b8b9e';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
+
+async function loadHistory(asin) {
+  // Force fresh fetch
+  const r = await fetch(`/history/${asin}.json?t=${new Date().getTime()}`);
+  return await r.json();
+}
+
+function buildChart(canvasId, points, asin) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  const infoDiv = document.getElementById('info-' + asin);
+  
+  // Filter Data
+  const validPoints = points.filter(p => p.price_value > 0);
+  if (validPoints.length === 0) return;
+  
+  // -- KEEPA STYLE: Extend line to NOW --
+  const lastPoint = validPoints[validPoints.length - 1];
+  const now = new Date();
+  const lastDate = new Date(lastPoint.ts.replace(" ", "T") + "Z");
+  
+  // If data is older than 2 hours, add a "current" point to draw the line to the right edge
+  if ((now - lastDate) > 1000 * 60 * 60 * 2) {
+      validPoints.push({
+          ts: now.toISOString().replace("T", " ").substring(0, 19),
+          price_value: lastPoint.price_value
+      });
+  }
+
+  const labels = validPoints.map(p => p.ts);
+  const prices = validPoints.map(p => p.price_value);
+
+  // Vertical Line Plugin
+  const crosshairPlugin = {
+    id: 'crosshair',
+    afterDraw: (chart) => {
+      if (chart.tooltip?._active?.length) {
+        const x = chart.tooltip._active[0].element.x;
+        const yAxis = chart.scales.y;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x, yAxis.top);
+        ctx.lineTo(x, yAxis.bottom);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#fff'; 
+        ctx.setLineDash([5, 5]); 
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  };
+
+  // Gradient Fill
+  const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+  gradient.addColorStop(0, 'rgba(213, 51, 105, 0.5)'); 
+  gradient.addColorStop(1, 'rgba(213, 51, 105, 0)');   
+
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Price',
+        data: prices,
+        stepped: 'before', // Keepa Style
+        borderColor: '#d53369',
+        backgroundColor: gradient,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 6,
+        pointBackgroundColor: '#fff',
+        fill: true,
+        spanGaps: true
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+            enabled: false, // Custom logic only
+            external: function(context) {
+                const tooltip = context.tooltip;
+                if (tooltip.opacity === 0) {
+                    infoDiv.innerText = "";
+                    return;
+                }
+                const dateStr = tooltip.dataPoints[0].label;
+                const price = tooltip.dataPoints[0].raw;
+                
+                // Format Date
+                const d = new Date(dateStr.replace(" ", "T") + "Z");
+                const dateFmt = d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+                const timeFmt = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute:'2-digit' });
+                
+                infoDiv.innerHTML = `<span style="color:#aaa">${dateFmt} ${timeFmt}</span> &nbsp; <span style="color:#d53369; font-weight:bold;">SAR ${price}</span>`;
+            }
+        }
+      },
+      scales: {
+        x: {
+            display: true,
+            ticks: {
+                color: '#666',
+                maxTicksLimit: 4,
+                callback: function(val, index) {
+                    const label = this.getLabelForValue(val);
+                    if(!label) return "";
+                    const d = new Date(label.replace(" ", "T"));
+                    return d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+                }
+            },
+            grid: { display: false }
+        },
+        y: { 
+            display: true, 
+            position: 'right',
+            grid: { color: 'rgba(255,255,255,0.05)' } 
+        }
+      }
+    },
+    plugins: [crosshairPlugin]
+  });
+}
+
+(async () => {
+  const asins = {{ items|map(attribute="asin")|list|tojson }};
+  for (const asin of asins) {
+    try {
+      const points = await loadHistory(asin);
+      buildChart(`chart-${asin}`, points, asin);
+    } catch (e) { console.error(e); }
+  }
+})();
+</script>
+</body>
+</html>
