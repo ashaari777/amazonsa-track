@@ -161,6 +161,17 @@
     
     .chart-box { height: 180px; width: 100%; margin-top: auto; }
     
+    /* Footer for Chart Tooltip */
+    .chart-info {
+        font-size: 0.85em; 
+        color: #daae51; 
+        text-align: center; 
+        height: 20px; 
+        margin-top: 5px;
+        font-weight: 600;
+        min-height: 20px;
+    }
+
     .card-footer {
         margin-top: 15px;
         padding-top: 15px;
@@ -177,16 +188,6 @@
     .btn-set:hover { color: #fff; }
     .btn-delete { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.9rem; transition: 0.2s; }
     .btn-delete:hover { color: #f87171; }
-    
-    /* Footer for Chart Tooltip */
-    .chart-info {
-        font-size: 0.85em; 
-        color: #daae51; 
-        text-align: center; 
-        height: 20px; 
-        margin-top: 5px;
-        font-weight: 600;
-    }
 
     /* Mobile */
     @media (max-width: 768px) {
@@ -284,7 +285,7 @@
             <div class="chart-box">
                 <canvas id="chart-{{ it.asin }}"></canvas>
             </div>
-            <!-- Custom Tooltip Div -->
+            <!-- Dynamic Footer -->
             <div id="info-{{ it.asin }}" class="chart-info"></div>
 
             <div class="card-footer">
@@ -308,21 +309,22 @@
 Chart.defaults.color = '#8b8b9e';
 Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
 
+// FORCE FRESH DATA with timestamp
 async function loadHistory(asin) {
-  const r = await fetch(`/history/${asin}.json`);
+  const r = await fetch(`/history/${asin}.json?t=${new Date().getTime()}`);
   return await r.json();
 }
 
 function buildChart(canvasId, points, asin) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   const infoDiv = document.getElementById('info-' + asin);
+  
   const validPoints = points.filter(p => p.price_value > 0);
   if (validPoints.length === 0) return;
 
   const labels = validPoints.map(p => p.ts);
   const prices = validPoints.map(p => p.price_value);
 
-  // Gradient
   const gradient = ctx.createLinearGradient(0, 0, 0, 400);
   gradient.addColorStop(0, 'rgba(213, 51, 105, 0.5)'); 
   gradient.addColorStop(1, 'rgba(213, 51, 105, 0)');   
@@ -354,9 +356,8 @@ function buildChart(canvasId, points, asin) {
       plugins: {
         legend: { display: false },
         tooltip: {
-            enabled: false, // Disable default tooltip
+            enabled: false, 
             external: function(context) {
-                // Custom Logic to update the Div below chart
                 const tooltip = context.tooltip;
                 if (tooltip.opacity === 0) {
                     infoDiv.innerText = "";
@@ -364,8 +365,10 @@ function buildChart(canvasId, points, asin) {
                 }
                 const dateStr = tooltip.dataPoints[0].label;
                 const price = tooltip.dataPoints[0].raw;
-                // Format Date nicely
-                const d = new Date(dateStr);
+                // Parse UTC string and convert to Locale String
+                // Assuming DB returns UTC "YYYY-MM-DD HH:MM:SS"
+                const d = new Date(dateStr + " UTC"); 
+                
                 const dateFmt = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
                 const timeFmt = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute:'2-digit' });
                 
