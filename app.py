@@ -231,13 +231,19 @@ async def scrape_one_with_context(browser, asin):
 
         # Price (aggressive selectors)
         for sel in [
-            ".priceToPay .a-offscreen",
-            ".apexPriceToPay .a-offscreen",
-            "#corePrice_feature_div .a-price .a-offscreen",
-            "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
-            ".a-price .a-offscreen",
-            "span.a-price:not(.a-text-price) > span.a-offscreen"
-        ]:
+    "#corePrice_feature_div .a-price .a-offscreen",
+    "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
+    "#newBuyBoxPrice .a-offscreen",
+    "#priceblock_ourprice",
+    "#priceblock_dealprice",
+    "#price_inside_buybox",
+    "#buybox .a-price .a-offscreen",
+    ".priceToPay .a-offscreen",
+    ".apexPriceToPay .a-offscreen",
+    ".a-price .a-offscreen",
+    "span.a-price:not(.a-text-price) > span.a-offscreen"
+]:
+
             try:
                 txt = await page.locator(sel).first.text_content()
                 txt = clean(txt)
@@ -250,45 +256,46 @@ async def scrape_one_with_context(browser, asin):
             except Exception:
                 pass
 
-        # Coupons (enhanced)
-        coupons_found = []
+        # Coupons / promos (percentage-focused)
+percents = []
 
-        # Coupon labels
+def add_percents(txt):
+    if not txt:
+        return
+    for m in re.findall(r"(\d{1,3})\s*%", txt):
         try:
-            texts = await page.locator("label[id*='coupon']").all_inner_texts()
-            for c in texts:
-                c = clean(c)
-                if c:
-                    coupons_found.append(c)
-        except Exception:
+            n = int(m)
+            if 1 <= n <= 95:
+                percents.append(n)
+        except:
             pass
 
-        # Text-based offers/promo mentions
-        try:
-            promo_texts = await page.locator(
-                ".promoPriceBlockMessage, #instant-order-update, .a-section.a-spacing-small span"
-            ).all_inner_texts()
-            for txt in promo_texts:
-                txt = clean(txt)
-                if not txt:
-                    continue
-                if any(k in txt for k in ["Savings", "promo code", "Credit Cards", "Bank", "Save", "off", "%"]):
-                    if len(txt) < 160:
-                        coupons_found.append(txt)
-        except Exception:
-            pass
+# Scan coupon labels
+try:
+    texts = await page.locator("label[id*='coupon']").all_inner_texts()
+    for t in texts:
+        add_percents(clean(t))
+except:
+    pass
 
-        # Extract display snippet for coupon_text
-        coupon_display = []
-        for c in coupons_found:
-            m = re.search(r"(\d+%)|(SAR\s?\d+)", c)
-            if m:
-                coupon_display.append(m.group(0))
+# Scan promo / savings text
+try:
+    promo_texts = await page.locator(
+        "#promoPriceBlockMessage_feature_div, .promoPriceBlockMessage, "
+        "#instant-order-update, #promotions_feature_div, "
+        ".a-section.a-spacing-small span"
+    ).all_inner_texts()
+    for t in promo_texts:
+        t = clean(t)
+        if t and any(k in t.lower() for k in ["savings", "save", "off", "promo", "code", "credit", "prime"]):
+            add_percents(t)
+except:
+    pass
 
-        if coupon_display:
-            data["coupon_text"] = " | ".join(sorted(set(coupon_display)))
-        elif coupons_found:
-            data["coupon_text"] = "Coupon Available"
+if percents:
+    data["coupon_text"] = " | ".join([f"%{p}" for p in sorted(set(percents))])
+else:
+    data["coupon_text"] = None
 
         # Discount badge
         try:
