@@ -141,7 +141,8 @@
     
     .card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,0.2); }
     
-    .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
+    /* --- CARD HEADER LAYOUT (Title row, Price row, Coupon/Low row) --- */
+    .card-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
     
     .item-title {
         font-size: 1rem;
@@ -155,8 +156,60 @@
         margin-right: 10px;
     }
     
-    .price-block { text-align: right; }
-    .current-price { font-size: 1.4rem; font-weight: 700; color: #fff; }
+    .stats-line {
+        font-size: 0.8em; 
+        color: var(--text-muted);
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        line-height: 1.2;
+    }
+    .stats-pill {
+        color: #4ade80;
+        background: rgba(74, 222, 128, 0.10);
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(74, 222, 128, 0.18);
+        font-weight: 600;
+    }
+    .price-row {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: #fff;
+        letter-spacing: 0.2px;
+    }
+    .badge-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        font-size: 0.8em;
+        line-height: 1.2;
+    }
+    .coupon-pill {
+        color: #4ade80;
+        background: rgba(74, 222, 128, 0.10);
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(74, 222, 128, 0.18);
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .low-pill {
+        color: #f59e0b;
+        background: rgba(245, 158, 11, 0.10);
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(245, 158, 11, 0.18);
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    /* Optional: keep discount badge style if you still show it somewhere */
     .discount { font-size: 0.8rem; color: #4ade80; background: rgba(74, 222, 128, 0.1); padding: 2px 6px; border-radius: 4px; }
     
     .chart-box { height: 180px; width: 100%; margin-top: auto; }
@@ -273,16 +326,25 @@
                 <a href="{{ it.url }}" target="_blank" class="item-title">
                     {{ it.latest_name if it.latest_name else it.asin }}
                 </a>
-                <div class="price-block">
-                    <div class="current-price">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
+                <!-- Row 2: Current | Lowest | Highest (same size as coupon) -->
+                <div class="stats-line" id="stats-{{ it.asin }}">
+                    <span class="stats-pill" id="c-{{ it.asin }}">C: --</span>
+                    <span class="muted">|</span>
+                    <span class="stats-pill" id="l-{{ it.asin }}">L: --</span>
+                    <span class="muted">|</span>
+                    <span class="stats-pill" id="h-{{ it.asin }}">H: --</span>
+                </div>
+
+                <!-- Row 3: Price (big) -->
+                <div class="price-row" id="price-{{ it.asin }}">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
+
+                <!-- Row 4: Coupon (if exists) + Low -->
+                <div class="badge-row">
                     {% if it.coupon_text %}
-                        <div style="font-size:0.8em; color:#4ade80; margin-top:2px;">🎟️ {{ it.coupon_text }}</div>
-                    {% endif %}
-                    {% if it.latest_discount is not none %}
-                        <span class="discount">-{{ it.latest_discount }}%</span>
+                        <span class="coupon-pill">🎟️ {{ it.coupon_text }}</span>
                     {% endif %}
                     {% if it.is_lowest %}
-                        <div style="font-size:0.8em; color:#f59e0b;">🔥 Low</div>
+                        <span class="low-pill">🔥 Low</span>
                     {% endif %}
                 </div>
             </div>
@@ -343,6 +405,26 @@ function buildChart(canvasId, points, asin) {
 
   const labels = validPoints.map(p => p.ts);
   const prices = validPoints.map(p => p.price_value);
+
+  // --- Header stats (C | L | H) + big price row ---
+  const fmtSAR = (n) => {
+      if (n === null || n === undefined || isNaN(n)) return "--";
+      // keep 2 decimals for small movements like your chart
+      return "SAR " + Number(n).toFixed(2);
+  };
+
+  const current = prices[prices.length - 1];
+  const low = Math.min(...prices);
+  const high = Math.max(...prices);
+
+  const cEl = document.getElementById('c-' + asin);
+  const lEl = document.getElementById('l-' + asin);
+  const hEl = document.getElementById('h-' + asin);
+  const priceEl = document.getElementById('price-' + asin);
+  if (cEl) cEl.textContent = `C: ${fmtSAR(current)}`;
+  if (lEl) lEl.textContent = `L: ${fmtSAR(low)}`;
+  if (hEl) hEl.textContent = `H: ${fmtSAR(high)}`;
+  if (priceEl) priceEl.textContent = fmtSAR(current);
 
   // Vertical Line Plugin
   const crosshairPlugin = {
