@@ -405,8 +405,13 @@ def run_async(coro, *args):
 # ---------------- DB Write Logic ----------------
 
 def write_history(item_id, data):
+    """Write one price history row for an item, with de-duplication by time interval.
+
+    - If price_value is missing (blocked / not found), we normally do NOT insert a row.
+    - But if coupon_text exists, we update the latest row coupon_text so it can appear in UI.
+    """
     # Do not write empty/blocked rows
-        if not data.get("price_value"):
+    if not data.get("price_value"):
         # Still update latest coupon text if we have it (even when price missing)
         if data.get("coupon_text"):
             conn = db_conn()
@@ -426,8 +431,6 @@ def write_history(item_id, data):
                 conn.commit()
             conn.close()
         return
-
-
 
     conn = db_conn()
     cur = conn.cursor()
