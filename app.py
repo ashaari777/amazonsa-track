@@ -229,20 +229,32 @@ async def scrape_one_with_context(browser, asin):
         if not data["item_name"]:
             raise Exception("Blocked/No Title")
 
-        # Price (aggressive selectors)
+               # Price (aggressive selectors)
         for sel in [
-    "#corePrice_feature_div .a-price .a-offscreen",
-    "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
-    "#newBuyBoxPrice .a-offscreen",
-    "#priceblock_ourprice",
-    "#priceblock_dealprice",
-    "#price_inside_buybox",
-    "#buybox .a-price .a-offscreen",
-    ".priceToPay .a-offscreen",
-    ".apexPriceToPay .a-offscreen",
-    ".a-price .a-offscreen",
-    "span.a-price:not(.a-text-price) > span.a-offscreen"
-]:
+            "#corePrice_feature_div .a-price .a-offscreen",
+            "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
+            "#newBuyBoxPrice .a-offscreen",
+            "#priceblock_ourprice",
+            "#priceblock_dealprice",
+            "#price_inside_buybox",
+            "#buybox .a-price .a-offscreen",
+            ".priceToPay .a-offscreen",
+            ".apexPriceToPay .a-offscreen",
+            ".a-price .a-offscreen",
+            "span.a-price:not(.a-text-price) > span.a-offscreen",
+        ]:
+            try:
+                txt = await page.locator(sel).first.text_content()
+                txt = clean(txt)
+                if txt:
+                    data["price_text"] = txt
+                    val = parse_money_value(txt)
+                    if val is not None:
+                        data["price_value"] = val
+                        break
+            except Exception:
+                pass
+
 
             try:
                 txt = await page.locator(sel).first.text_content()
@@ -256,46 +268,46 @@ async def scrape_one_with_context(browser, asin):
             except Exception:
                 pass
 
-        # Coupons / promos (percentage-focused)
-percents = []
+                # Coupons / promos (percentage-focused)
+        percents = []
 
-def add_percents(txt):
-    if not txt:
-        return
-    for m in re.findall(r"(\d{1,3})\s*%", txt):
+        def add_percents(txt):
+            if not txt:
+                return
+            for m in re.findall(r"(\d{1,3})\s*%", txt):
+                try:
+                    n = int(m)
+                    if 1 <= n <= 95:
+                        percents.append(n)
+                except:
+                    pass
+
+        # Scan coupon labels
         try:
-            n = int(m)
-            if 1 <= n <= 95:
-                percents.append(n)
+            texts = await page.locator("label[id*='coupon']").all_inner_texts()
+            for t in texts:
+                add_percents(clean(t))
         except:
             pass
 
-# Scan coupon labels
-try:
-    texts = await page.locator("label[id*='coupon']").all_inner_texts()
-    for t in texts:
-        add_percents(clean(t))
-except:
-    pass
+        # Scan promo / savings text
+        try:
+            promo_texts = await page.locator(
+                "#promoPriceBlockMessage_feature_div, .promoPriceBlockMessage, "
+                "#instant-order-update, #promotions_feature_div, "
+                ".a-section.a-spacing-small span"
+            ).all_inner_texts()
+            for t in promo_texts:
+                t = clean(t)
+                if t and any(k in t.lower() for k in ["savings", "save", "off", "promo", "code", "credit", "prime"]):
+                    add_percents(t)
+        except:
+            pass
 
-# Scan promo / savings text
-try:
-    promo_texts = await page.locator(
-        "#promoPriceBlockMessage_feature_div, .promoPriceBlockMessage, "
-        "#instant-order-update, #promotions_feature_div, "
-        ".a-section.a-spacing-small span"
-    ).all_inner_texts()
-    for t in promo_texts:
-        t = clean(t)
-        if t and any(k in t.lower() for k in ["savings", "save", "off", "promo", "code", "credit", "prime"]):
-            add_percents(t)
-except:
-    pass
-
-if percents:
-    data["coupon_text"] = " | ".join([f"%{p}" for p in sorted(set(percents))])
-else:
-    data["coupon_text"] = None
+        if percents:
+            data["coupon_text"] = " | ".join([f"%{p}" for p in sorted(set(percents))])
+        else:
+            data["coupon_text"] = None
 
         # Discount badge
         try:
