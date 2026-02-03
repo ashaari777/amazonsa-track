@@ -230,7 +230,16 @@
   .target-form input{width:120px;}
   .btn-save{padding:8px 14px;border-radius:10px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.18);color:#fff;font-weight:900;cursor:pointer;}
   .btn-delete{padding:8px 14px;border-radius:10px;background:rgba(255,92,110,.14);border:1px solid rgba(255,92,110,.35);color:#ff5c6e;font-weight:900;cursor:pointer;}
-  </style>
+  
+/* Footer layout like reference */
+.card-footer{display:flex; align-items:center; justify-content:space-between; gap:14px;}
+.target-form{display:flex; align-items:center; gap:10px; flex:1;}
+.target-form label{color:#cfd3ff; font-weight:600;}
+.target-form .sep{opacity:.35; margin:0 2px;}
+.target-form input{max-width:160px;}
+/* Coupons stay in ONE pill container */
+.coupon-pill{display:inline-flex; align-items:center; gap:10px; padding:6px 10px; border-radius:999px;}
+</style>
 </head>
 <body>
 
@@ -308,8 +317,8 @@
           </div>
           <div class="card-footer">
             <form method="post" action="{{ url_for('set_target_price', item_id=it.id) }}" class="target-form">
-              <label>Target price</label>
-              <input type="number" step="0.01" name="target_price" value="{{ it.target_price or '' }}" placeholder="SAR">
+              <label>Target price</label><span class="sep">|</span>
+              <input type="number" step="0.01" name="target_price" value="{{ it.target_price or '' }}" placeholder="SAR"><span class="sep">|</span>
               <button class="btn-save" type="submit">Save</button>
             </form>
             <form method="post" action="{{ url_for('delete', asin=it.asin) }}" class="delete-form" onsubmit="return confirm('Stop tracking?');">
@@ -448,6 +457,7 @@ function buildChart(canvasId, points, asin) {
       },
       scales: {
         x: {
+              offset: true,
             display: true,
             offset: true,
             ticks: {
