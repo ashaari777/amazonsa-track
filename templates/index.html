@@ -237,10 +237,36 @@
         gap: 10px;
     }
     
-    .target-form { display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.2); padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); width: 100%; justify-content: space-between; }
-    .target-input { background: transparent; border: none; color: #daae51; font-weight: bold; width: 60px; font-size: 0.9em; outline: none; }
-    .btn-set { background: transparent; border: none; color: #888; cursor: pointer; font-size: 0.8em; }
-    .btn-set:hover { color: #fff; }
+    .target-form { 
+        display: flex; align-items: center; gap: 8px;
+        background: rgba(0,0,0,0.22);
+        padding: 6px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+    }
+    .target-label { color: #d6b04d; font-weight: 800; font-size: 0.9em; }
+    .target-input { 
+        background: rgba(0,0,0,0.18);
+        border: 1px solid rgba(255,255,255,0.10);
+        color: #eab308;
+        font-weight: 800;
+        width: 90px;
+        font-size: 0.9em;
+        outline: none;
+        border-radius: 8px;
+        padding: 6px 8px;
+    }
+    .btn-save {
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.12);
+        color: #e5e7eb;
+        font-weight: 800;
+        font-size: 0.85em;
+        padding: 6px 10px;
+        border-radius: 10px;
+        cursor: pointer;
+    }
+    .btn-save:hover { background: rgba(255,255,255,0.10); }
     .btn-delete { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.9rem; transition: 0.2s; }
     .btn-delete:hover { color: #f87171; }
 
@@ -391,27 +417,21 @@
                     {{ it.latest_name if it.latest_name else it.asin }}
                 </a>
 
-                <!-- Row 2: Current (green) + L/H + Low badge -->
+                <!-- Row 2: Current price (no box) + L/H + Low badge -->
                 <div class="meta-row" id="meta-{{ it.asin }}">
-                    <span class="pill pill-current" id="cur-{{ it.asin }}">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</span>
+                    <span class="current-price" id="cur-{{ it.asin }}">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</span>
                     <span class="pill pill-low-outline" id="l-{{ it.asin }}">L: --</span>
                     <span class="pill pill-high-outline" id="h-{{ it.asin }}">H: --</span>
-
-                    {% if it.is_lowest %}
-                        <span class="pill pill-low-flag">🔥 Low</span>
-                    {% endif %}
+                    <span class="pill pill-low-flag" id="low-{{ it.asin }}" style="display:none;">🔥 Low</span>
                 </div>
 
-                <!-- Row 3: Coupon pills (only if exists) -->
+                <!-- Row 3: Coupon (single box, only if exists) -->
                 {% if it.coupon_text %}
                 <div class="coupon-row">
-                    <span class="pill pill-ticket">🎟️</span>
-                    {% for c in it.coupon_text.split('|') %}
-                        {% set cc = c.strip() %}
-                        {% if cc %}
-                            <span class="pill pill-coupon">{{ cc }}</span>
-                        {% endif %}
-                    {% endfor %}
+                    <span class="coupon-pill" title="Coupons">🎟️ {{ it.coupon_text }}</span>
+                </div>
+                {% endif %}
+{% endfor %}
                 </div>
                 {% endif %}
 </div>
@@ -424,9 +444,9 @@
 
             <div class="card-footer">
                 <form method="post" action="{{ url_for('set_target_price', item_id=it.id) }}" class="target-form">
-                    <span style="font-size:0.8em; color:#888;">Target:</span>
-                    <input type="number" name="target_price" class="target-input" value="{{ it.target_price if it.target_price else '' }}" placeholder="Set">
-                    <button class="btn-set" type="submit">💾</button>
+                    <span class="target-label">Target price:</span>
+                    <input type="number" name="target_price" class="target-input" value="{{ it.target_price if it.target_price else '' }}" placeholder="">
+                    <button class="btn-save" type="submit">Save</button>
                 </form>
 
                 <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Stop tracking?');">
@@ -470,8 +490,13 @@ function buildChart(canvasId, points, asin) {
       });
   }
 
-  const labels = validPoints.map(p => p.ts);
-  const prices = validPoints.map(p => p.price_value);
+  let labels = validPoints.map(p => p.ts);
+  let prices = validPoints.map(p => p.price_value);
+  // If only one record, center it in the chart
+  if (prices.length === 1) {
+    labels = ["", labels[0], ""]; 
+    prices = [null, prices[0], null];
+  }
 
   // --- Header stats (C | L | H) + big price row ---
   const fmtSAR = (n) => {
@@ -491,6 +516,13 @@ function buildChart(canvasId, points, asin) {
   if (curEl) curEl.textContent = fmtSAR(current);
   if (lEl) lEl.textContent = `L: ${fmtSAR(low).replace('SAR ', '')}`;
   if (hEl) hEl.textContent = `H: ${fmtSAR(high).replace('SAR ', '')}`;
+
+  // Show 🔥 Low only when current is the real low AND there is a real range
+  const lowBadge = document.getElementById('low-' + asin);
+  if (lowBadge) {
+    const showLow = (prices.filter(v => v !== null && v !== undefined).length > 1) && (current === low) && (low < high);
+    lowBadge.style.display = showLow ? 'inline-flex' : 'none';
+  }
   
 
   // Vertical Line Plugin
@@ -583,7 +615,7 @@ function buildChart(canvasId, points, asin) {
         },
         y: { 
             display: true, 
-            position: 'right',
+            position: 'left',
             grid: { color: 'rgba(255,255,255,0.05)' } 
         }
       }
