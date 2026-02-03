@@ -262,7 +262,71 @@
         .search-input, .btn-glow { width: 100%; }
         .grid { grid-template-columns: 1fr; }
     }
-  </style>
+  
+    /* --- New header layout (Title / Current+L+H+Low / Coupon pills) --- */
+    .meta-row{
+        display:flex;
+        flex-wrap:wrap;
+        gap:10px;
+        align-items:center;
+        margin-top:10px;
+    }
+    .coupon-row{
+        display:flex;
+        flex-wrap:wrap;
+        gap:10px;
+        align-items:center;
+        margin-top:10px;
+    }
+    .pill{
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        padding:6px 10px;
+        border-radius:999px;
+        font-size:14px;
+        font-weight:600;
+        line-height:1;
+        border:1px solid rgba(255,255,255,0.18);
+        background: rgba(0,0,0,0.18);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    }
+    .pill-current{
+        color:#2ee59d;
+        border-color: rgba(46,229,157,0.35);
+        background: rgba(46,229,157,0.10);
+    }
+    .pill-low-outline{
+        color:#2ee59d;
+        border-color: rgba(46,229,157,0.35);
+        background: rgba(0,0,0,0.14);
+    }
+    .pill-high-outline{
+        color:#ff5c8a;
+        border-color: rgba(255,92,138,0.35);
+        background: rgba(0,0,0,0.14);
+    }
+    .pill-low-flag{
+        color:#ffb347;
+        border-color: rgba(255,179,71,0.40);
+        background: rgba(255,179,71,0.10);
+    }
+    .pill-ticket{
+        color:#ff7aa8;
+        border-color: rgba(255,122,168,0.35);
+        background: rgba(255,122,168,0.10);
+        padding:6px 10px;
+        min-width: 40px;
+        justify-content:center;
+    }
+    .pill-coupon{
+        color:#2ee59d;
+        border-color: rgba(46,229,157,0.35);
+        background: rgba(46,229,157,0.10);
+    }
+</style>
 </head>
 <body>
 
@@ -326,28 +390,31 @@
                 <a href="{{ it.url }}" target="_blank" class="item-title">
                     {{ it.latest_name if it.latest_name else it.asin }}
                 </a>
-                <!-- Row 2: Current | Lowest | Highest (same size as coupon) -->
-                <div class="stats-line" id="stats-{{ it.asin }}">
-                    <span class="stats-pill" id="c-{{ it.asin }}">C: --</span>
-                    <span class="muted">|</span>
-                    <span class="stats-pill" id="l-{{ it.asin }}">L: --</span>
-                    <span class="muted">|</span>
-                    <span class="stats-pill" id="h-{{ it.asin }}">H: --</span>
-                </div>
 
-                <!-- Row 3: Price (big) -->
-                <div class="price-row" id="price-{{ it.asin }}">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</div>
+                <!-- Row 2: Current (green) + L/H + Low badge -->
+                <div class="meta-row" id="meta-{{ it.asin }}">
+                    <span class="pill pill-current" id="cur-{{ it.asin }}">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</span>
+                    <span class="pill pill-low-outline" id="l-{{ it.asin }}">L: --</span>
+                    <span class="pill pill-high-outline" id="h-{{ it.asin }}">H: --</span>
 
-                <!-- Row 4: Coupon (if exists) + Low -->
-                <div class="badge-row">
-                    {% if it.coupon_text %}
-                        <span class="coupon-pill">🎟️ {{ it.coupon_text }}</span>
-                    {% endif %}
                     {% if it.is_lowest %}
-                        <span class="low-pill">🔥 Low</span>
+                        <span class="pill pill-low-flag">🔥 Low</span>
                     {% endif %}
                 </div>
-            </div>
+
+                <!-- Row 3: Coupon pills (only if exists) -->
+                {% if it.coupon_text %}
+                <div class="coupon-row">
+                    <span class="pill pill-ticket">🎟️</span>
+                    {% for c in it.coupon_text.split('|') %}
+                        {% set cc = c.strip() %}
+                        {% if cc %}
+                            <span class="pill pill-coupon">{{ cc }}</span>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+</div>
             
             <div class="chart-box">
                 <canvas id="chart-{{ it.asin }}"></canvas>
@@ -417,14 +484,14 @@ function buildChart(canvasId, points, asin) {
   const low = Math.min(...prices);
   const high = Math.max(...prices);
 
-  const cEl = document.getElementById('c-' + asin);
+  const curEl = document.getElementById('cur-' + asin);
   const lEl = document.getElementById('l-' + asin);
   const hEl = document.getElementById('h-' + asin);
-  const priceEl = document.getElementById('price-' + asin);
-  if (cEl) cEl.textContent = `C: ${fmtSAR(current)}`;
-  if (lEl) lEl.textContent = `L: ${fmtSAR(low)}`;
-  if (hEl) hEl.textContent = `H: ${fmtSAR(high)}`;
-  if (priceEl) priceEl.textContent = fmtSAR(current);
+  
+  if (curEl) curEl.textContent = fmtSAR(current);
+  if (lEl) lEl.textContent = `L: ${fmtSAR(low).replace('SAR ', '')}`;
+  if (hEl) hEl.textContent = `H: ${fmtSAR(high).replace('SAR ', '')}`;
+  
 
   // Vertical Line Plugin
   const crosshairPlugin = {
