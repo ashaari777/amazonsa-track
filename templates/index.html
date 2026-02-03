@@ -141,22 +141,87 @@
     
     .card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,0.2); }
     
-    .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
     
+    /* --- CARD HEADER LAYOUT (Reference-style) --- */
+    .card-header { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+
     .item-title {
-        font-size: 1rem;
-        font-weight: 600;
+        font-size: 1.05rem;
+        font-weight: 700;
         color: #fff;
         text-decoration: none;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
-        margin-right: 10px;
     }
-    
-    .price-block { text-align: right; }
-    .current-price { font-size: 1.4rem; font-weight: 700; color: #fff; }
+
+    /* Row 2 chips: Current + L + H + Low */
+    .chips-line {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+        line-height: 1.2;
+        font-size: 0.92rem;
+    }
+
+    .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.10);
+        background: rgba(0,0,0,0.20);
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        white-space: nowrap;
+    }
+    .chip-current { color: #4ade80; background: rgba(74, 222, 128, 0.10); border-color: rgba(74, 222, 128, 0.25); }
+    .chip-low     { color: #4ade80; border-color: rgba(74, 222, 128, 0.35); background: rgba(0,0,0,0.12); }
+    .chip-high    { color: #fb7185; border-color: rgba(251, 113, 133, 0.35); background: rgba(0,0,0,0.12); }
+
+    .chip-lowbadge {
+        color: #f59e0b;
+        border-color: rgba(245, 158, 11, 0.30);
+        background: rgba(245, 158, 11, 0.10);
+        padding: 6px 12px;
+    }
+
+    /* Row 3: Coupon pills */
+    .coupon-line {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+        line-height: 1.2;
+        font-size: 0.92rem;
+    }
+
+    .coupon-pill {
+        color: #4ade80;
+        background: rgba(74, 222, 128, 0.10);
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(74, 222, 128, 0.22);
+        font-weight: 800;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+    }
+    .coupon-pill .icon {
+        width: 18px; height: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        background: rgba(239, 68, 68, 0.20);
+        border: 1px solid rgba(239, 68, 68, 0.25);
+        font-size: 0.85em;
+    }
+/* Optional: keep discount badge style if you still show it somewhere */
     .discount { font-size: 0.8rem; color: #4ade80; background: rgba(74, 222, 128, 0.1); padding: 2px 6px; border-radius: 4px; }
     
     .chart-box { height: 180px; width: 100%; margin-top: auto; }
@@ -209,37 +274,7 @@
         .search-input, .btn-glow { width: 100%; }
         .grid { grid-template-columns: 1fr; }
     }
-
-  /* --- Header rows (title / price+stats / coupon) --- */
-  .item-title-row{font-size:18px;font-weight:800;color:#fff;line-height:1.2;margin-bottom:8px;}
-  .item-price-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
-  .cur-price{font-size:18px;font-weight:900;color:#36d07f;}
-  .stat-box{font-size:14px;font-weight:800;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.18);}
-  .stat-low{color:#36d07f;border-color:rgba(54,208,127,.45);}
-  .stat-high{color:#ff5c6e;border-color:rgba(255,92,110,.45);}
-  .badge-low{font-size:14px;font-weight:900;padding:6px 12px;border-radius:999px;border:1px solid rgba(255,173,51,.35);background:rgba(255,173,51,.12);color:#ffad33;}
-  .coupon-box{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:900;color:#7CFFB2;
-    padding:6px 12px;border-radius:999px;border:1px solid rgba(124,255,178,.25);background:rgba(124,255,178,.12);
-    width:fit-content;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .hover-info{font-size:12px;color:rgba(255,255,255,.75);min-height:16px;margin-bottom:6px;}
-
-  /* --- Footer row (Target | input | Save)  Delete --- */
-  .card-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-  .target-form{display:flex;align-items:center;gap:10px;flex:1;}
-  .target-form label{font-weight:800;color:#b6ffcf;}
-  .target-form input{width:120px;}
-  .btn-save{padding:8px 14px;border-radius:10px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.18);color:#fff;font-weight:900;cursor:pointer;}
-  .btn-delete{padding:8px 14px;border-radius:10px;background:rgba(255,92,110,.14);border:1px solid rgba(255,92,110,.35);color:#ff5c6e;font-weight:900;cursor:pointer;}
-  
-/* Footer layout like reference */
-.card-footer{display:flex; align-items:center; justify-content:space-between; gap:14px;}
-.target-form{display:flex; align-items:center; gap:10px; flex:1;}
-.target-form label{color:#cfd3ff; font-weight:600;}
-.target-form .sep{opacity:.35; margin:0 2px;}
-.target-form input{max-width:160px;}
-/* Coupons stay in ONE pill container */
-.coupon-pill{display:inline-flex; align-items:center; gap:10px; padding:6px 10px; border-radius:999px;}
-</style>
+  </style>
 </head>
 <body>
 
@@ -297,36 +332,57 @@
       </div>
     {% else %}
       <div class="grid">
-      {% for it in items %}
-        <div class="card item-card" data-asin="{{ it.asin }}">
-          <div class="card-header">
-            <div class="item-title-row">{{ it.latest_name or it.asin }}</div>
-            <div class="item-price-row">
-              <span class="cur-price" id="cur-{{ it.asin }}">{{ it.latest_price_text or "—" }}</span>
-              <span class="stat-box stat-low" id="low-{{ it.asin }}">L: —</span>
-              <span class="stat-box stat-high" id="high-{{ it.asin }}">H: —</span>
-              <span class="badge-low" id="lowbadge-{{ it.asin }}" style="display:none;">🔥 Low</span>
+        {% for it in items %}
+          <div class="card">
+            <div class="card-header">
+                <!-- Row 1: Title -->
+                <a href="{{ it.url }}" target="_blank" class="item-title">
+                    {{ it.latest_name if it.latest_name else it.asin }}
+                </a>
+
+                <!-- Row 2: Current + Lowest + Highest + Low (all same size) -->
+                <div class="chips-line" id="chips-{{ it.asin }}">
+                    <span class="chip chip-current" id="c-{{ it.asin }}">SAR --</span>
+                    <span class="chip chip-low" id="l-{{ it.asin }}">L: --</span>
+                    <span class="chip chip-high" id="h-{{ it.asin }}">H: --</span>
+                    {% if it.is_lowest %}
+                        <span class="chip chip-lowbadge">🔥 Low</span>
+                    {% endif %}
+                </div>
+
+                <!-- Row 3: Coupons (each % as a pill) -->
+                {% if it.coupon_text %}
+                    <div class="coupon-line">
+                        {% set parts = it.coupon_text.split('|') %}
+                        {% for p in parts %}
+                            {% set p2 = p.strip() %}
+                            {% if p2 %}
+                                <span class="coupon-pill"><span class="icon">🎟️</span>{{ p2 }}</span>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                {% endif %}
             </div>
-            {% if it.coupon_text %}
-              <div class="coupon-box" id="couponbox-{{ it.asin }}">🏷️ {{ it.coupon_text }}</div>
-            {% endif %}
+
+            <div class="chart-box">
+                <canvas id="chart-{{ it.asin }}"></canvas>
+            </div>
+            <!-- Custom Tooltip Footer -->
+            <div id="info-{{ it.asin }}" class="chart-info"></div>
+
+            <div class="card-footer">
+                <form method="post" action="{{ url_for('set_target_price', item_id=it.id) }}" class="target-form">
+                    <span style="font-size:0.8em; color:#888;">Target:</span>
+                    <input type="number" name="target_price" class="target-input" value="{{ it.target_price if it.target_price else '' }}" placeholder="Set">
+                    <button class="btn-set" type="submit">💾</button>
+                </form>
+
+                <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Stop tracking?');">
+                    <button class="btn-delete" type="submit">Delete</button>
+                </form>
+            </div>
           </div>
-          <div class="card-body">
-            <div class="hover-info" id="info-{{ it.asin }}"></div>
-            <canvas class="chart" id="c_{{ it.asin }}"></canvas>
-          </div>
-          <div class="card-footer">
-            <form method="post" action="{{ url_for('set_target_price', item_id=it.id) }}" class="target-form">
-              <label>Target price</label><span class="sep">|</span>
-              <input type="number" step="0.01" name="target_price" value="{{ it.target_price or '' }}" placeholder="SAR"><span class="sep">|</span>
-              <button class="btn-save" type="submit">Save</button>
-            </form>
-            <form method="post" action="{{ url_for('delete', asin=it.asin) }}" class="delete-form" onsubmit="return confirm('Stop tracking?');">
-              <button class="btn-delete" type="submit">Delete</button>
-            </form>
-          </div>
-        </div>
-      {% endfor %}
+        {% endfor %}
       </div>
     {% endif %}
   </div>
@@ -364,23 +420,21 @@ function buildChart(canvasId, points, asin) {
 
   const labels = validPoints.map(p => p.ts);
   const prices = validPoints.map(p => p.price_value);
-      // Update header stats (Current / L / H / Low badge) after we load history
-      if (prices.length) {
-        const curVal = prices[prices.length - 1];
-        const minVal = Math.min(...prices);
-        const maxVal = Math.max(...prices);
-        const curEl = document.getElementById(`cur-${asin}`);
-        const lowEl = document.getElementById(`low-${asin}`);
-        const highEl = document.getElementById(`high-${asin}`);
-        const lowBadge = document.getElementById(`lowbadge-${asin}`);
-        if (curEl && typeof curVal === 'number') curEl.textContent = `SAR ${curVal.toFixed(2)}`;
-        if (lowEl && typeof minVal === 'number') lowEl.textContent = `L: ${minVal.toFixed(2)}`;
-        if (highEl && typeof maxVal === 'number') highEl.textContent = `H: ${maxVal.toFixed(2)}`;
-        const same = Math.abs(curVal - minVal) < 0.001 && Math.abs(curVal - maxVal) < 0.001;
-        const isLow = Math.abs(curVal - minVal) < 0.001 && !same;
-        if (lowBadge) lowBadge.style.display = isLow ? 'inline-flex' : 'none';
-      }
 
+  // --- Header stats (C | L | H) + big price row ---
+  const fmtSAR = (n) => {
+      if (n === null || n === undefined || isNaN(n)) return "--";
+      // keep 2 decimals for small movements like your chart
+      return "SAR " + Number(n).toFixed(2);
+  };
+
+  const current = prices[prices.length - 1];
+  const low = Math.min(...prices);
+  const high = Math.max(...prices);
+
+  const cEl = document.getElementById('c-' + asin);
+  const lEl = document.getElementById('l-' + asin);
+  const hEl = document.getElementById('h-' + asin);
 
   // Vertical Line Plugin
   const crosshairPlugin = {
@@ -419,7 +473,7 @@ function buildChart(canvasId, points, asin) {
         borderColor: '#d53369',
         backgroundColor: gradient,
         borderWidth: 2,
-              pointRadius: (prices.length === 1 ? 4 : 0),
+        pointRadius: 0,
         pointHoverRadius: 6,
         pointBackgroundColor: '#fff',
         fill: true,
@@ -457,9 +511,7 @@ function buildChart(canvasId, points, asin) {
       },
       scales: {
         x: {
-              offset: true,
             display: true,
-            offset: true,
             ticks: {
                 color: '#666',
                 maxTicksLimit: 4,
@@ -474,7 +526,7 @@ function buildChart(canvasId, points, asin) {
         },
         y: { 
             display: true, 
-              position: 'left',
+            position: 'right',
             grid: { color: 'rgba(255,255,255,0.05)' } 
         }
       }
