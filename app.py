@@ -406,22 +406,27 @@ def run_async(coro, *args):
 
 def write_history(item_id, data):
     # Do not write empty/blocked rows
-    if not data.get("price_value"):
-    # Still update latest coupon text if we have it
-    if data.get("coupon_text"):
-        conn = db_conn(); cur = conn.cursor()
-        cur.execute("""
-            SELECT id FROM price_history
-            WHERE item_id=%s
-            ORDER BY ts DESC
-            LIMIT 1
-        """, (item_id,))
-        latest = cur.fetchone()
-        if latest:
-            cur.execute("UPDATE price_history SET coupon_text=%s WHERE id=%s", (data["coupon_text"], latest["id"]))
-            conn.commit()
-        conn.close()
-    return
+        if not data.get("price_value"):
+        # Still update latest coupon text if we have it (even when price missing)
+        if data.get("coupon_text"):
+            conn = db_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT id FROM price_history
+                WHERE item_id=%s
+                ORDER BY ts DESC
+                LIMIT 1
+            """, (item_id,))
+            latest_row = cur.fetchone()
+            if latest_row:
+                cur.execute(
+                    "UPDATE price_history SET coupon_text=%s WHERE id=%s",
+                    (data["coupon_text"], latest_row["id"])
+                )
+                conn.commit()
+            conn.close()
+        return
+
 
 
     conn = db_conn()
