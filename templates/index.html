@@ -501,16 +501,16 @@
         </div>
 
         <div class="card-footer">
-          <form class="target-form" method="POST" action="{{ url_for('set_target', asin=it.asin) }}">
-            <label>Target price:</label>
-            <span class="sep">|</span>
-            <input name="target_price" value="{{ it.target_price or '' }}" placeholder="SAR">
-            <span class="sep">|</span>
-            <button class="savebtn" type="submit">Save</button>
-          </form>
+  <form class="target-form" method="POST" action="{{ url_for('set_target_price', asin=it.asin) }}">
+    <label>Target price:</label>
+    <span class="sep">|</span>
+    <input name="target_price" value="{{ it.target_price or '' }}" placeholder="SAR">
+    <span class="sep">|</span>
+    <button class="savebtn" type="submit">Save</button>
+  </form>
 
-          <a class="del" href="{{ url_for('delete_item', asin=it.asin) }}">Delete</a>
-        </div>
+  <a class="del" href="{{ url_for('delete_item', asin=it.asin) }}">Delete</a>
+</div>
 
       </div>
       {% endfor %}
