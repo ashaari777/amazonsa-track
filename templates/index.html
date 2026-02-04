@@ -1,881 +1,633 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Amazon.sa Tracker</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard</title>
+
   <style>
-    :root {
-        --bg: #0f0c29;
-        --sidebar-bg: #1a1a2e;
-        --card-bg: rgba(30, 30, 50, 0.6);
-        --accent: #d53369;
-        --text: #ffffff;
-        --text-muted: #8b8b9e;
-        --border: rgba(255,255,255,0.08);
-
-        /* One “card height” used for BOTH cards and the 5-banner block */
-        --card-h: 560px;
+    :root{
+      --bg0:#0b0b18;
+      --bg1:#11112a;
+      --card:#1a1a36;
+      --card2:#202048;
+      --stroke:rgba(255,255,255,.08);
+      --text:#f3f4ff;
+      --muted:rgba(255,255,255,.65);
+      --accent:#ff4d6d;
+      --good:#29d3a3;
+      --warn:#ffb14a;
+      --bad:#ff4d6d;
+      --radius:22px;
+      --shadow: 0 18px 50px rgba(0,0,0,.35);
+      --card-h: 520px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      color:var(--text);
+      background: radial-gradient(1200px 700px at 60% 20%, rgba(120,90,255,.22), transparent 60%),
+                  radial-gradient(900px 550px at 30% 80%, rgba(255,77,109,.12), transparent 60%),
+                  linear-gradient(180deg, var(--bg0), var(--bg1));
+      min-height:100vh;
+    }
+    .layout{display:flex; min-height:100vh;}
+    .sidebar{
+      width:240px;
+      padding:22px 16px;
+      border-right:1px solid rgba(255,255,255,.06);
+      background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.08));
+    }
+    .side-title{font-weight:800; opacity:.9; margin:0 0 14px 8px;}
+    .navbtn{
+      display:block;
+      width:100%;
+      text-align:left;
+      padding:12px 14px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.08);
+      color:var(--text);
+      background: rgba(255,255,255,.03);
+      margin-bottom:10px;
+      font-weight:700;
+    }
+    .navbtn.active{outline:2px solid rgba(255,193,7,.35); border-color:rgba(255,193,7,.35);}
+    .logout{
+      position:fixed;
+      left:16px;
+      bottom:18px;
+      width:208px;
+      padding:10px 14px;
+      border-radius:14px;
+      background: rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.08);
+      color:rgba(255,255,255,.85);
+      font-weight:700;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    .content{flex:1; padding:26px 22px;}
+    .container{max-width:1300px; margin:0 auto;}
+    .topbar{
+      display:flex; align-items:center; justify-content:space-between;
+      margin-bottom:14px;
+    }
+    .topbar h1{margin:0; font-size:28px; letter-spacing:.2px;}
+    .updated{font-size:12px; opacity:.6}
 
-    body {
-        background: var(--bg);
-        background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
-        color: var(--text);
-        display: flex;
-        min-height: 100vh;
-        overflow-x: hidden;
+    .addbar{
+      display:flex;
+      gap:10px;
+      padding:12px;
+      border-radius:18px;
+      background: rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.07);
+      box-shadow: 0 10px 30px rgba(0,0,0,.22);
+      margin-bottom:14px;
+      align-items:center;
+    }
+    .addbar input{
+      flex:1;
+      height:44px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.08);
+      background: rgba(0,0,0,.18);
+      color:var(--text);
+      padding:0 14px;
+      outline:none;
+      font-weight:600;
+    }
+    .addbar button{
+      height:44px;
+      min-width:92px;
+      border-radius:14px;
+      border:0;
+      cursor:pointer;
+      color:#111;
+      font-weight:900;
+      background: linear-gradient(90deg, #ff4d6d, #ffb14a);
+      box-shadow: 0 10px 24px rgba(255,77,109,.22);
     }
 
-    /* --- SIDEBAR --- */
-    .sidebar {
-        width: 250px;
-        background: rgba(20, 20, 35, 0.8);
-        backdrop-filter: blur(20px);
-        border-right: 1px solid var(--border);
-        padding: 30px 20px;
-        display: flex;
-        flex-direction: column;
-        position: fixed;
-        height: 100vh;
-        z-index: 10;
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(6, minmax(0,1fr));
+      gap:16px;
+      align-items:stretch;
+    }
+    @media (max-width:1200px){
+      .sidebar{display:none}
+      .layout{display:block}
+      .grid{grid-template-columns: repeat(2, minmax(0,1fr));}
+    }
+    @media (max-width:720px){
+      .grid{grid-template-columns: 1fr;}
     }
 
-    .user-email-top {
-        font-size: 1rem;
-        font-weight: 700;
-        color: #fff;
-        margin-bottom: 40px;
-        padding-bottom: 20px;
-        border-bottom: 1px solid var(--border);
-        word-break: break-all;
+    .card{
+      background: radial-gradient(900px 520px at 40% 15%, rgba(255,255,255,.06), transparent 55%),
+                  linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.10));
+      border:1px solid rgba(255,255,255,.08);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+      position:relative;
+      min-height: var(--card-h);
     }
 
-    .nav-item {
-        display: flex;
-        align-items: center;
-        padding: 12px 15px;
-        color: var(--text-muted);
-        text-decoration: none;
-        border-radius: 12px;
-        margin-bottom: 8px;
-        transition: 0.3s;
-        font-weight: 500;
+    /* ------- existing banner styles from index_with_marketing.html ------- */
+    .marketing-wrap{margin:0 0 16px 0;}
+    .marketing-inner{
+      background: rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:18px;
+      padding:14px;
     }
-
-    .nav-item:hover, .nav-item.active { background: rgba(255,255,255,0.05); color: #fff; }
-    .nav-item.active { border-left: 3px solid #daae51; }
-    .spacer { flex-grow: 1; }
-
-    .logout-btn-sidebar {
-        background: transparent;
-        border: 1px solid var(--border);
-        color: var(--text-muted);
-        padding: 10px;
-        border-radius: 8px;
-        cursor: pointer;
-        width: 100%;
-        transition: 0.3s;
-    }
-    .logout-btn-sidebar:hover { border-color: #fff; color: #fff; }
-
-    /* --- MAIN CONTENT --- */
-    .main { margin-left: 250px; flex: 1; padding: 30px 40px; width: 100%; }
-
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-    .header h1 { font-size: 1.8rem; font-weight: 600; }
-    .mobile-header { display: none; }
-
-    /* --- ADD ITEM WIDGET --- */
-    .add-panel {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        padding: 20px;
-        margin-bottom: 18px;
-        display: flex;
-        align-items: center;
-        gap: 15px;
-        backdrop-filter: blur(10px);
-    }
-
-    .search-input {
-        flex: 1;
-        background: rgba(0,0,0,0.2);
-        border: 1px solid var(--border);
-        padding: 15px 20px;
-        border-radius: 12px;
-        color: #fff;
-        outline: none;
-        font-size: 1rem;
-        min-width: 0;
-    }
-    .search-input:focus { border-color: #daae51; }
-
-    .btn-glow {
-        background: linear-gradient(90deg, #d53369, #daae51);
-        border: none;
-        padding: 15px 30px;
-        border-radius: 12px;
-        color: #fff;
-        font-weight: 600;
-        cursor: pointer;
-        transition: 0.3s;
-        white-space: nowrap;
-    }
-    .btn-glow:hover { box-shadow: 0 0 15px rgba(218, 174, 81, 0.4); }
-
-    /* --- GRID --- */
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 25px; }
-
-    .card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        padding: 20px;
-        transition: 0.3s;
-        display: flex;
-        flex-direction: column;
-
-        /* keep a consistent “card height” to match marketing banners block */
-        min-height: var(--card-h);
-    }
-
-    .card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,0.2); }
-
-    /* --- CARD HEADER LAYOUT --- */
-    .card-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-
-    .item-title {
-        font-size: 1rem;
-        font-weight: 600;
-        color: #fff;
-        text-decoration: none;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        margin-right: 10px;
-    }
-
-    .chart-box { height: 180px; width: 100%; margin-top: auto; }
-
-    .chart-info {
-        font-size: 0.85em;
-        color: #daae51;
-        text-align: left;
-        height: 20px;
-        margin-top: 5px;
-        font-weight: 600;
-        min-height: 20px;
-        border-top: 1px solid rgba(255,255,255,0.1);
-        padding-top: 5px;
-    }
-
-    .card-footer {
-        margin-top: 10px;
-        padding-top: 10px;
-        border-top: 1px solid var(--border);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .target-form {
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        background: rgba(0,0,0,0.2);
-        padding: 5px 10px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        width: 100%;
-        justify-content: space-between;
-    }
-    .target-input { background: transparent; border: none; color: #daae51; font-weight: bold; width: 60px; font-size: 0.9em; outline: none; }
-    .btn-set { background: transparent; border: none; color: #888; cursor: pointer; font-size: 0.8em; }
-    .btn-set:hover { color: #fff; }
-    .btn-delete { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.9rem; transition: 0.2s; }
-    .btn-delete:hover { color: #f87171; }
-
-    /* Mobile */
-    @media (max-width: 768px) {
-        :root{ --card-h: auto; } /* on mobile let it flow naturally */
-        .sidebar { display: none; }
-        .main { margin-left: 0; padding: 15px; }
-        .header h1 { display: none; }
-        .header .last-update { display: none; }
-        .mobile-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid var(--border);
-        }
-        .add-panel { flex-direction: column; padding: 15px; gap: 10px; }
-        .search-input, .btn-glow { width: 100%; }
-        .grid { grid-template-columns: 1fr; }
-    }
-
-    /* --- New header layout (Title / Current+L+H+Low / Coupon pills) --- */
-    .meta-row{
-        display:flex;
-        flex-wrap:wrap;
-        gap:10px;
-        align-items:center;
-        margin-top:10px;
-    }
-    .coupon-row{
-        display:flex;
-        flex-wrap:wrap;
-        gap:10px;
-        align-items:center;
-        margin-top:10px;
-    }
-    .pill{
-        display:inline-flex;
-        align-items:center;
-        gap:8px;
-        padding:6px 10px;
-        border-radius:999px;
-        font-size:14px;
-        font-weight:600;
-        line-height:1;
-        border:1px solid rgba(255,255,255,0.18);
-        background: rgba(0,0,0,0.18);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-        box-shadow: 0 6px 18px rgba(0,0,0,0.18);
-    }
-    .pill-current{
-        color:#2ee59d;
-        border-color: rgba(46,229,157,0.35);
-        background: rgba(46,229,157,0.10);
-    }
-    .pill-low-outline{
-        color:#2ee59d;
-        border-color: rgba(46,229,157,0.35);
-        background: rgba(0,0,0,0.14);
-    }
-    .pill-high-outline{
-        color:#ff5c8a;
-        border-color: rgba(255,92,138,0.35);
-        background: rgba(0,0,0,0.14);
-    }
-    .pill-low-flag{
-        color:#ffb347;
-        border-color: rgba(255,179,71,0.40);
-        background: rgba(255,179,71,0.10);
-    }
-    .pill-ticket{
-        color:#ff7aa8;
-        border-color: rgba(255,122,168,0.35);
-        background: rgba(255,122,168,0.10);
-        padding:6px 10px;
-        min-width: 40px;
-        justify-content:center;
-    }
-    .pill-coupon{
-        color:#2ee59d;
-        border-color: rgba(46,229,157,0.35);
-        background: rgba(46,229,157,0.10);
-    }
-
-    /* --- MARKETING BANNERS (Top deals) --- */
-    .marketing-wrap{
-        margin: 0 0 22px 0;
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        background: rgba(30, 30, 50, 0.35);
-        backdrop-filter: blur(10px);
-        padding: 14px;
-
-        /* FULL height same as ONE card */
-        height: var(--card-h);
-
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-
     .marketing-head{
-        display:flex;
-        align-items:flex-start;
-        justify-content:space-between;
-        gap:12px;
-        margin-bottom: 10px;
-        flex: 0 0 auto;
-        padding: 4px 6px 0 6px;
+      display:flex; align-items:flex-end; justify-content:space-between;
+      margin:0 0 10px 0;
     }
-    .marketing-head h2{
-        font-size: 1.05rem;
-        font-weight: 800;
-        letter-spacing: .2px;
-    }
-    .marketing-sub{
-        color: var(--text-muted);
-        font-size: .85em;
-        margin-top: 2px;
-    }
+    .marketing-title{font-weight:900; font-size:14px;}
+    .marketing-hint{font-size:12px; opacity:.6}
 
-    .marketing-list{
-        display:flex;
-        flex-direction:column;
-        gap: 10px;
-        flex: 1 1 auto;
-        min-height: 0;
-    }
-
-    /* Each of 5 banners shares the remaining height evenly */
     .deal-banner{
-        position: relative;
-        overflow: hidden;
-        border-radius: 18px;
-        border: 2px solid rgba(255, 190, 90, 0.55);
-        background:
-          radial-gradient(120% 200% at 0% 0%, rgba(255, 225, 155, 0.55), rgba(255, 180, 60, 0.20) 45%, rgba(255, 150, 40, 0.10) 70%, rgba(0,0,0,0) 100%),
-          linear-gradient(180deg, rgba(255, 232, 170, 0.60), rgba(255, 198, 80, 0.28));
-        box-shadow: 0 18px 55px rgba(255, 170, 50, 0.15);
-
-        padding: 10px 12px;
-        flex: 1 1 0;
-        min-height: 0;
-
-        display:flex;
-        flex-direction: column;
-        justify-content: center;
+      position:relative;
+      border-radius:16px;
+      overflow:hidden;
+      background: linear-gradient(180deg, rgba(255,216,120,.78), rgba(255,190,80,.55));
+      border:1px solid rgba(255,255,255,.28);
+      box-shadow: 0 10px 22px rgba(0,0,0,.25);
     }
     .deal-banner::before{
-        content:"";
-        position:absolute;
-        inset:10px;
-        border-radius: 14px;
-        border: 2px dashed rgba(255, 150, 40, 0.55);
-        pointer-events:none;
-        opacity:.85;
+      content:"";
+      position:absolute; inset:8px;
+      border-radius:12px;
+      border:2px dashed rgba(255,120,0,.55);
+      pointer-events:none;
     }
     .deal-notch{
-        position:absolute;
-        top: 50%;
-        transform: translateY(-50%);
-        width: 26px;
-        height: 66px;
-        background: linear-gradient(180deg, rgba(255, 90, 60, 0.95), rgba(225, 40, 35, 0.95));
-        border-radius: 10px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.22);
-        opacity: .85;
+      position:absolute;
+      top:18px;
+      width:30px; height:60px;
+      background: linear-gradient(180deg, #ff4d3b, #ff2b5c);
+      filter: drop-shadow(0 8px 14px rgba(0,0,0,.25));
+      opacity:.9;
     }
-    .deal-notch.left{ left: -14px; }
-    .deal-notch.right{ right: -14px; }
-
-    .deal-top{
-        position: relative;
-        z-index: 1;
-        display:flex;
-        align-items:flex-start;
-        justify-content:space-between;
-        gap: 10px;
-        padding: 0 6px 6px 6px;
+    .deal-notch.left{left:0; border-radius:0 18px 18px 0;}
+    .deal-notch.right{right:0; border-radius:18px 0 0 18px;}
+    .deal-body{
+      position:relative;
+      z-index:2;
+      display:grid;
+      grid-template-columns: 1fr 190px;
+      gap:12px;
+      height:100%;
+      padding:12px 14px;
+      align-items:center;
+    }
+    .deal-left{
+      min-width:0;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      padding-left:6px;
     }
     .deal-title{
-        font-size: 0.98rem;
-        font-weight: 900;
-        color: rgba(35, 28, 18, 0.92);
-        text-shadow: 0 1px 0 rgba(255,255,255,0.25);
-        display: -webkit-box;
-        -webkit-line-clamp: 1;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-
-    .deal-body{
-        position: relative;
-        z-index: 1;
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        gap: 10px;
-        padding: 0 6px;
+      font-weight:900;
+      font-size:12px;
+      color: rgba(10,10,10,.85);
     }
     .deal-price{
-        font-size: 1.25rem;
-        font-weight: 950;
-        color: rgba(35, 28, 18, 0.92);
-        letter-spacing: .2px;
-        white-space: nowrap;
+      font-weight:900;
+      font-size:14px;
+      color: rgba(10,10,10,.88);
     }
     .deal-mid{
-        display:flex;
-        align-items:center;
-        gap: 10px;
-        flex-wrap: nowrap;
-        justify-content:flex-end;
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      gap:10px;
+      padding-right:6px;
     }
     .deal-divider{
-        width: 2px;
-        height: 28px;
-        background: rgba(210, 110, 30, 0.55);
-        border-radius: 99px;
+      width:2px;
+      height:44px;
+      background: rgba(255,120,0,.6);
+      border-radius:4px;
     }
     .deal-off{
-        display:flex;
-        align-items:flex-end;
-        gap: 4px;
-        color: rgba(20, 15, 10, 0.92);
-        font-weight: 950;
-        white-space: nowrap;
+      display:flex;
+      align-items:flex-end;
+      gap:3px;
+      font-weight:1000;
+      color: rgba(10,10,10,.90);
     }
-    .deal-off .n{
-        font-size: 2.25rem;
-        line-height: .9;
-    }
+    .deal-off .n{font-size:44px; line-height:1;}
     .deal-off .pct{
-        display:inline-flex;
-        align-items:center;
-        justify-content:center;
-        width: 30px;
-        height: 30px;
-        border-radius: 999px;
-        background: rgba(255, 140, 40, 0.95);
-        color: rgba(255,255,255,0.95);
-        font-size: 1.05rem;
-        font-weight: 950;
-        margin-bottom: 2px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.18);
+      font-size:18px;
+      line-height:1.2;
+      background: #ff8a00;
+      color:#fff;
+      width:26px; height:26px;
+      display:grid; place-items:center;
+      border-radius:50%;
+      transform: translateY(-6px);
+      box-shadow: 0 10px 18px rgba(0,0,0,.18);
+      font-weight:1000;
     }
-
     .deal-footer{
-        position: relative;
-        z-index: 1;
-        display:flex;
-        justify-content:center;
-        margin-top: 8px;
-        padding-bottom: 2px;
+      position:absolute;
+      left:0; right:0;
+      bottom:10px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      z-index:3;
+      pointer-events:none;
     }
     .deal-add-btn{
-        background: linear-gradient(180deg, rgba(255, 165, 65, 0.98), rgba(245, 125, 35, 0.98));
-        border: 0;
-        color: rgba(255,255,255,0.96);
-        font-weight: 950;
-        font-size: 0.98rem;
-        padding: 8px 22px;
-        border-radius: 999px;
-        cursor:pointer;
-        box-shadow: 0 14px 35px rgba(0,0,0,0.18);
-        transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
-    }
-    .deal-add-btn:hover{ transform: translateY(-1px); box-shadow: 0 18px 45px rgba(0,0,0,0.22); }
-
-    /* Disable style when user already has this item */
-    .deal-add-btn.is-disabled{
-        opacity: .45;
-        cursor: not-allowed;
-        transform: none !important;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+      pointer-events:auto;
+      height:26px;
+      min-width:74px;
+      border-radius:14px;
+      border:0;
+      cursor:pointer;
+      font-weight:900;
+      color:#fff;
+      background: linear-gradient(90deg, #ff7a00, #ffb14a);
+      box-shadow: 0 10px 20px rgba(0,0,0,.25);
+      text-transform:lowercase;
     }
 
-    @media (max-width: 768px){
-        .marketing-wrap{ height: auto; }
-        .deal-banner{ min-height: 92px; }
-        .deal-price{ font-size: 1.15rem; }
-        .deal-off .n{ font-size: 2.0rem; }
+    /* --- Marketing card (Top deals) --- */
+    .marketing-card{
+      display:flex;
+      flex-direction:column;
+      height: var(--card-h, 520px);
+      min-height: 520px;
+      overflow:hidden;
+    }
+    .mkt-card-head{
+      display:flex;
+      align-items:flex-end;
+      justify-content:space-between;
+      padding:10px 12px 8px 12px;
+      border-bottom:1px solid rgba(255,255,255,.06);
+    }
+    .mkt-head-title{font-weight:800; font-size:14px; letter-spacing:.2px;}
+    .mkt-head-sub{font-size:11px; opacity:.75; margin-top:2px;}
+    .mkt-head-right{font-size:11px; opacity:.6;}
+    .marketing-list{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      padding:10px 12px 12px 12px;
+      flex:1;
+      min-height:0;
+    }
+    .marketing-list .deal-banner{
+      flex:1;
+      min-height:0;
+      width:100%;
+    }
+    .marketing-list .deal-title{
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      max-width:100%;
+    }
+    .deal-add-btn{
+      opacity:1 !important;
+      filter: drop-shadow(0 6px 14px rgba(0,0,0,.35));
+    }
+    .deal-add-btn:hover{opacity:1 !important;}
+    .deal-meta{display:none !important;}
+
+    /* Cards content (your existing styles continue below in your original file) */
+    .card-inner{padding:14px 14px 12px 14px;}
+    .item-title{
+      margin:0 0 10px 0;
+      font-size:13px;
+      font-weight:900;
+      line-height:1.2;
+      min-height:34px;
+    }
+    .meta-row{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-bottom:10px;
+    }
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.03);
+      font-weight:800;
+      font-size:11px;
+      color: rgba(255,255,255,.86);
+    }
+    .pill.good{border-color: rgba(41,211,163,.35); color: rgba(41,211,163,.95);}
+    .pill.bad{border-color: rgba(255,77,109,.35); color: rgba(255,77,109,.95);}
+    .pill.warn{border-color: rgba(255,177,74,.35); color: rgba(255,177,74,.95);}
+    .pill.low{border-color: rgba(255,177,74,.35); color: rgba(255,177,74,.95);}
+    .coupon-row{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;}
+    .chart-wrap{height:260px; margin-top:6px;}
+    canvas{width:100% !important; height:100% !important;}
+    .card-footer{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:12px 14px 14px 14px;
+      border-top:1px solid rgba(255,255,255,.06);
+    }
+    .target-form{display:flex; gap:8px; align-items:center;}
+    .target-form input{
+      width:140px;
+      height:34px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.22);
+      color: rgba(255,255,255,.90);
+      padding:0 10px;
+      font-weight:800;
+      outline:none;
+    }
+    .target-form button{
+      height:34px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.05);
+      color: rgba(255,255,255,.9);
+      font-weight:900;
+      cursor:pointer;
+      padding:0 10px;
+    }
+    .delete-link{
+      color:#ff4d6d;
+      font-weight:900;
+      text-decoration:none;
+      cursor:pointer;
     }
   </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
+
 <body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="side-title">User</div>
+      <button class="navbtn active">Dashboard</button>
 
-  <div class="sidebar">
-    <div class="user-email-top">{{ user["email"] }}</div>
-    <a href="#" class="nav-item active"><span>Dashboard</span></a>
-    {% if is_admin %}
-    <a href="{{ url_for('admin_dashboard') }}" class="nav-item"><span>Admin Dashboard</span></a>
-    {% endif %}
-    <div class="spacer"></div>
-    <form method="post" action="{{ url_for('logout') }}">
-        <button type="submit" class="logout-btn-sidebar">Log Out</button>
-    </form>
-  </div>
+      <form method="POST" action="{{ url_for('logout') }}">
+        <button class="logout" type="submit">Log Out</button>
+      </form>
+    </aside>
 
-  <div class="main">
-    <div class="mobile-header">
-        <div class="mobile-user">{{ user["email"] }}</div>
-        <form method="post" action="{{ url_for('logout') }}">
-            <button style="background:rgba(255,255,255,0.1); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:pointer;">Log Out</button>
-        </form>
-    </div>
-
-    <div class="header">
-        <div><h1>Dashboard</h1></div>
-        <div class="last-update" style="color:var(--text-muted); font-size:0.85em;">Updated: {{ last_global_update }}</div>
-    </div>
-
-    {% if announcement %}
-        <div style="background:#daae51; color:#000; padding:10px; border-radius:8px; margin-bottom:20px; font-weight:bold; text-align:center;">
-            📢 {{ announcement }}
+    <main class="content">
+      <div class="container">
+        <div class="topbar">
+          <h1>Dashboard</h1>
+          <div class="updated">Updated: {{ (last_global_update or "") }}</div>
         </div>
-    {% endif %}
 
-    <!-- Add Item Widget -->
-    <div class="add-panel">
-        <form method="post" action="{{ url_for('add') }}" style="display:flex; width:100%; gap:15px; align-items:center; flex-wrap:wrap;">
-            <input name="item" class="search-input" placeholder="Paste Amazon.sa link or ASIN..." required />
-            <button class="btn-glow" type="submit">Add</button>
+        <form class="addbar" method="POST" action="{{ url_for('add_item') }}">
+          <input name="q" placeholder="Paste Amazon.sa link or ASIN..." autocomplete="off" />
+          <button type="submit">Add</button>
         </form>
-    </div>
 
-    <!-- Marketing banners (Top deals) -->
-    <div class="marketing-wrap" id="marketing-wrap" style="display:none;">
-        <div class="marketing-head">
-            <h2>Top deals right now</h2>
-            <div class="marketing-sub">Tap “add” to monitor</div>
-        </div>
-        <div class="marketing-list" id="marketing-list"></div>
-    </div>
+        <div class="grid">
+          <!-- MARKETING CARD (Top 5 deals) — same width/height as a normal item card -->
+          <div class="card marketing-card" id="marketing-wrap">
+            <div class="mkt-card-head">
+              <div class="mkt-head-left">
+                <div class="mkt-head-title">Top deals right now</div>
+                <div class="mkt-head-sub">Tap “add” to monitor</div>
+              </div>
+              <div class="mkt-head-right">Top 5</div>
+            </div>
+            <div id="marketing-list" class="marketing-list" aria-label="Top deals"></div>
+          </div>
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        {% for cat,msg in messages %}
-          <div style="padding:15px; border-radius:12px; margin-bottom:20px; background: rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2);">{{msg}}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
-    {% if not items %}
-      <div style="text-align:center; padding:50px; color:var(--text-muted);">
-        <h2>No items yet</h2>
-        <p>Use the bar above to add your first product.</p>
-      </div>
-    {% else %}
-      <div class="grid">
-        {% for it in items %}
+          {% for it in items %}
           <div class="card">
-            <div class="card-header">
-                <a href="{{ it.url }}" target="_blank" class="item-title">
-                    {{ it.latest_name if it.latest_name else it.asin }}
-                </a>
+            <div class="card-inner">
+              <h3 class="item-title">{{ it.title }}</h3>
 
-                <!-- Row 2: Current (green) + L/H + Low badge -->
-                <div class="meta-row" id="meta-{{ it.asin }}">
-                    <span class="pill pill-current" id="cur-{{ it.asin }}">{{ it.latest_price_text if it.latest_price_text else "Pending" }}</span>
-                    <span class="pill pill-low-outline" id="l-{{ it.asin }}">L: --</span>
-                    <span class="pill pill-high-outline" id="h-{{ it.asin }}">H: --</span>
+              <div class="meta-row">
+                <span class="pill good">{{ it.price_text }}</span>
+                <span class="pill good">L: {{ it.lowest_price_text }}</span>
+                <span class="pill bad">H: {{ it.highest_price_text }}</span>
 
-                    {% if it.is_lowest %}
-                        <span class="pill pill-low-flag">🔥 Low</span>
-                    {% endif %}
-                </div>
-
-                <!-- Row 3: Coupon pills (only if exists) -->
-                {% if it.coupon_text %}
-                <div class="coupon-row">
-                    <span class="pill pill-ticket">🎟️</span>
-                    {% for c in it.coupon_text.split('|') %}
-                        {% set cc = c.strip() %}
-                        {% if cc %}
-                            <span class="pill pill-coupon">{{ cc }}</span>
-                        {% endif %}
-                    {% endfor %}
-                </div>
+                {% if it.is_low %}
+                  <span class="pill low">🔥 Low</span>
                 {% endif %}
-            </div>
+              </div>
 
-            <div class="chart-box">
-                <canvas id="chart-{{ it.asin }}"></canvas>
-            </div>
+              {% if it.coupon_text %}
+              <div class="coupon-row">
+                <span class="pill warn">🎟</span>
+                <span class="pill good">{{ it.coupon_text }}</span>
+              </div>
+              {% endif %}
 
-            <div id="info-{{ it.asin }}" class="chart-info"></div>
+              <div class="chart-wrap">
+                <canvas id="c_{{ it.asin }}"></canvas>
+              </div>
+            </div>
 
             <div class="card-footer">
-                <form method="post" action="{{ url_for('set_target_price', item_id=it.id) }}" class="target-form">
-                    <span style="font-size:0.8em; color:#888;">Target:</span>
-                    <input type="number" name="target_price" class="target-input" value="{{ it.target_price if it.target_price else '' }}" placeholder="Set">
-                    <button class="btn-set" type="submit">💾</button>
-                </form>
+              <form class="target-form" method="POST" action="{{ url_for('set_target_price', asin=it.asin) }}">
+                <span class="pill" style="padding:6px 10px; opacity:.8;">Target price:</span>
+                <input name="target_price" value="{{ it.target_price or '' }}" placeholder="" />
+                <button type="submit">Save</button>
+              </form>
 
-                <form method="post" action="{{ url_for('delete', asin=it.asin) }}" onsubmit="return confirm('Stop tracking?');">
-                    <button class="btn-delete" type="submit">Delete</button>
-                </form>
+              <form method="POST" action="{{ url_for('delete_item', asin=it.asin) }}">
+                <button type="submit" class="delete-link" style="background:none;border:none;">Delete</button>
+              </form>
             </div>
           </div>
-        {% endfor %}
+          {% endfor %}
+        </div>
       </div>
-    {% endif %}
+    </main>
   </div>
 
-<script>
-Chart.defaults.color = '#8b8b9e';
-Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
-
-async function loadHistory(asin) {
-  const r = await fetch(`/history/${asin}.json?t=${new Date().getTime()}`);
-  return await r.json();
-}
-
-function buildChart(canvasId, points, asin) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
-
-  const ctx = canvas.getContext('2d');
-  const infoDiv = document.getElementById('info-' + asin);
-
-  const validPoints = (points || []).filter(p => (p.price_value || 0) > 0);
-  if (validPoints.length === 0) return;
-
-  const lastPoint = validPoints[validPoints.length - 1];
-  const now = new Date();
-  const lastDate = new Date(String(lastPoint.ts || "").replace(" ", "T") + "Z");
-
-  if ((now - lastDate) > 1000 * 60 * 60 * 2) {
-      validPoints.push({
-          ts: now.toISOString().replace("T", " ").substring(0, 19),
-          price_value: lastPoint.price_value
-      });
-  }
-
-  const labels = validPoints.map(p => p.ts);
-  const prices = validPoints.map(p => p.price_value);
-
-  const fmtSAR = (n) => {
-      if (n === null || n === undefined || isNaN(n)) return "--";
-      return "SAR " + Number(n).toFixed(2);
-  };
-
-  const current = prices[prices.length - 1];
-  const low = Math.min(...prices);
-  const high = Math.max(...prices);
-
-  const curEl = document.getElementById('cur-' + asin);
-  const lEl = document.getElementById('l-' + asin);
-  const hEl = document.getElementById('h-' + asin);
-
-  if (curEl) curEl.textContent = fmtSAR(current);
-  if (lEl) lEl.textContent = `L: ${fmtSAR(low).replace('SAR ', '')}`;
-  if (hEl) hEl.textContent = `H: ${fmtSAR(high).replace('SAR ', '')}`;
-
-  const crosshairPlugin = {
-    id: 'crosshair',
-    afterDraw: (chart) => {
-      if (chart.tooltip?._active?.length) {
-        const x = chart.tooltip._active[0].element.x;
-        const yAxis = chart.scales.y;
-        const c = chart.ctx;
-        c.save();
-        c.beginPath();
-        c.moveTo(x, yAxis.top);
-        c.lineTo(x, yAxis.bottom);
-        c.lineWidth = 1;
-        c.strokeStyle = '#fff';
-        c.setLineDash([5, 5]);
-        c.stroke();
-        c.restore();
-      }
+  <script>
+    function escapeHtml(s){
+      return String(s ?? "")
+        .replaceAll("&","&amp;").replaceAll("<","&lt;")
+        .replaceAll(">","&gt;").replaceAll('"',"&quot;")
+        .replaceAll("'","&#039;");
     }
-  };
+    function normalizeAsin(q){
+      const s = String(q||"").trim();
+      const m = s.match(/([A-Z0-9]{10})/i);
+      return m ? m[1].toUpperCase() : "";
+    }
+    async function quickAddAsin(asin){
+      const a = normalizeAsin(asin);
+      if(!a) return;
+      try{
+        await fetch("{{ url_for('add_item') }}", {
+          method:"POST",
+          headers: {"Content-Type":"application/x-www-form-urlencoded"},
+          body: new URLSearchParams({q:a}).toString()
+        });
+        location.reload();
+      }catch(e){}
+    }
 
-  const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-  gradient.addColorStop(0, 'rgba(213, 51, 105, 0.5)');
-  gradient.addColorStop(1, 'rgba(213, 51, 105, 0)');
+    // USER's current monitored ASINs (so marketing won't show the same items)
+    const userAsins = new Set({{ items|map(attribute="asin")|list|tojson }});
 
-  new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: 'Price',
-        data: prices,
-        stepped: 'before',
-        borderColor: '#d53369',
-        backgroundColor: gradient,
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 6,
-        pointBackgroundColor: '#fff',
-        fill: true,
-        spanGaps: true
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-            enabled: false,
-            external: function(context) {
-                const tooltip = context.tooltip;
-                if (!infoDiv) return;
-                if (tooltip.opacity === 0) {
-                    infoDiv.innerText = "";
-                    return;
-                }
-                const dateStr = tooltip.dataPoints[0].label;
-                const price = tooltip.dataPoints[0].raw;
+    // Marketing items from backend (if your app.py provides it). If not, it falls back safely.
+    const marketingMeta = (
+      {% if marketing_items is defined %}{{ marketing_items|tojson }}{% else %}[]{% endif %}
+    ) || [];
 
-                const d = new Date(String(dateStr).replace(" ", "T") + "Z");
-                const dateFmt = d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-                const timeFmt = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute:'2-digit' });
+    const marketingSource = (marketingMeta.length ? marketingMeta : [
+      {%- for it in items %}
+      {asin:"{{ it.asin }}", title: {{ (it.title or "")|tojson }}, price_text: {{ (it.price_text or "")|tojson }}, discount_percent: {{ (it.discount_percent or 0)|int }}},
+      {%- endfor %}
+    ]);
 
-                infoDiv.innerHTML = `<span style="color:#aaa">${dateFmt} ${timeFmt}</span> &nbsp; <span style="color:#d53369; font-weight:bold;">SAR ${price}</span>`;
-            }
-        }
-      },
-      scales: {
-        x: {
-            display: true,
-            ticks: {
-                color: '#666',
-                maxTicksLimit: 4,
-                callback: function(val) {
-                    const label = this.getLabelForValue(val);
-                    if(!label) return "";
-                    const d = new Date(String(label).replace(" ", "T"));
-                    return d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-                }
-            },
-            grid: { display: false }
-        },
-        y: {
-            display: true,
-            position: 'right',
-            grid: { color: 'rgba(255,255,255,0.05)' }
-        }
+    function pickLabelPrice(d){
+      const p = (d.price_text || d.price || d.current_price_text || "").toString().trim();
+      if(p) return p;
+      const v = d.price_value ?? d.current_price_value;
+      return (v != null) ? ("SAR " + Number(v).toFixed(2)) : "SAR XX.XX";
+    }
+
+    function renderMarketingBanners(){
+      const wrap = document.getElementById("marketing-wrap");
+      const list = document.getElementById("marketing-list");
+      if(!wrap || !list) return;
+
+      // exclude user's own items
+      const deals = marketingSource
+        .filter(d => d && d.asin && !userAsins.has(d.asin))
+        .map(d => ({
+          asin: String(d.asin || "").toUpperCase(),
+          title: String(d.title || d.product_title || "").trim() || "Deal item",
+          price_text: String(pickLabelPrice(d)),
+          discount_percent: Number(d.discount_percent || d.discount || d.badge_percent || 0) || 0
+        }))
+        .filter(d => d.asin && d.title);
+
+      // sort by highest discount
+      deals.sort((a,b)=> (b.discount_percent||0) - (a.discount_percent||0));
+
+      // take top 5
+      const top = deals.slice(0,5);
+
+      // if fewer than 5, show placeholders (but still keep layout consistent)
+      while(top.length < 5){
+        top.push({asin:"", title:"More deals will appear here", price_text:"", discount_percent:0});
       }
-    },
-    plugins: [crosshairPlugin]
-  });
-}
 
-/* ========= MARKETING BANNERS DATA =========
-   If later you add backend variable `marketing_deals`, it will be used.
-   For now, it falls back to `items`.
-*/
-const marketingMeta = [
-{% if marketing_deals %}
-  {% for d in marketing_deals %}
-    {
-      asin: {{ d.asin|tojson }},
-      title: {{ (d.title or d.asin)|tojson }},
-      price_text: {{ (d.price_text or "SAR --")|tojson }},
-      coupon_text: {{ (d.coupon_text or "")|tojson }},
-      url: {{ (d.url or "")|tojson }}
-    },
-  {% endfor %}
-{% else %}
-  {% for it in items %}
-    {
-      asin: {{ it.asin|tojson }},
-      title: {{ (it.latest_name if it.latest_name else it.asin)|tojson }},
-      price_text: {{ (it.latest_price_text if it.latest_price_text else "Pending")|tojson }},
-      coupon_text: {{ (it.coupon_text or "")|tojson }},
-      url: {{ it.url|tojson }}
-    },
-  {% endfor %}
-{% endif %}
-];
+      list.innerHTML = top.map(d => {
+        const pct = (d.discount_percent && d.discount_percent > 0) ? d.discount_percent : 0;
+        const safeTitle = escapeHtml(d.title);
+        const safePrice = escapeHtml(d.price_text || "SAR XX.XX");
+        const pctText = escapeHtml(pct ? String(pct) : "0");
 
-const userAsins = new Set({{ items|map(attribute="asin")|list|tojson }});
+        const addBtn = d.asin
+          ? `<button class="deal-add-btn" onclick="quickAddAsin('${d.asin}')">add</button>`
+          : `<button class="deal-add-btn" disabled style="opacity:.55; cursor:not-allowed;">add</button>`;
 
-function extractMaxPercent(couponText){
-  if(!couponText) return null;
-  const nums = (String(couponText).match(/\d{1,3}/g) || [])
-    .map(n=>parseInt(n,10))
-    .filter(n=>n>=1 && n<=95);
-  if(!nums.length) return null;
-  return Math.max(...nums);
-}
+        return `
+          <div class="deal-banner">
+            <div class="deal-notch left"></div>
+            <div class="deal-notch right"></div>
 
-function escapeHtml(str){
-  return String(str)
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
+            <div class="deal-body">
+              <div class="deal-left">
+                <div class="deal-title">${safeTitle}</div>
+                <div class="deal-price">${safePrice}</div>
+              </div>
 
-function quickAddAsin(asin){
-  if(userAsins.has(asin)){
-    alert("You already have this item in your dashboard.");
-    return;
-  }
-  const form = document.createElement("form");
-  form.method = "POST";
-  form.action = "{{ url_for('add') }}";
-  form.style.display = "none";
-  const inp = document.createElement("input");
-  inp.name = "item";
-  inp.value = asin;
-  form.appendChild(inp);
-  document.body.appendChild(form);
-  form.submit();
-}
-
-function renderMarketingBanners(){
-  const wrap = document.getElementById("marketing-wrap");
-  const list = document.getElementById("marketing-list");
-  if(!wrap || !list) return;
-
-  const deals = (marketingMeta || [])
-    .map(d => ({...d, pct: extractMaxPercent(d.coupon_text)}))
-    .sort((a,b)=> (b.pct||0) - (a.pct||0));
-
-  const top = deals.slice(0, 5);
-  if(!top.length) return;
-
-  list.innerHTML = top.map(d => {
-    const pct = d.pct ? String(d.pct) : "--";
-    const safeTitle = (d.title || d.asin);
-    const safePrice = (d.price_text || "SAR --");
-    const already = userAsins.has(d.asin);
-
-    return `
-      <div class="deal-banner" data-asin="${d.asin}">
-        <div class="deal-notch left"></div>
-        <div class="deal-notch right"></div>
-
-        <div class="deal-top">
-          <div class="deal-title">${escapeHtml(safeTitle)}</div>
-        </div>
-
-        <div class="deal-body">
-          <div class="deal-price">${escapeHtml(safePrice)}</div>
-          <div class="deal-mid">
-            <div class="deal-divider"></div>
-            <div class="deal-off">
-              <div class="n">${escapeHtml(pct)}</div>
-              <div class="pct">%</div>
+              <div class="deal-mid">
+                <div class="deal-divider"></div>
+                <div class="deal-off">
+                  <div class="n">${pctText}</div>
+                  <div class="pct">%</div>
+                </div>
+              </div>
             </div>
+
+            <div class="deal-footer">${addBtn}</div>
           </div>
-        </div>
+        `;
+      }).join("");
+    }
 
-        <div class="deal-footer">
-          <button class="deal-add-btn ${already ? "is-disabled" : ""}" ${already ? "disabled" : ""} onclick="quickAddAsin('${d.asin}')">add</button>
-        </div>
-      </div>
-    `;
-  }).join("");
+    async function loadHistory(asin){
+      const url = `/history/${asin}.json?t=${Date.now()}`;
+      const r = await fetch(url);
+      if(!r.ok) return [];
+      return await r.json();
+    }
 
-  wrap.style.display = "";
-}
+    function buildChart(asin, points){
+      const el = document.getElementById(`c_${asin}`);
+      if(!el) return;
 
-(async () => {
-  renderMarketingBanners();
+      const labels = points.map(p => p.ts_label || p.ts || "");
+      const values = points.map(p => Number(p.price_value ?? p.price ?? 0));
 
-  const asins = {{ items|map(attribute="asin")|list|tojson }};
-  for (const asin of asins) {
-    try {
-      const points = await loadHistory(asin);
-      buildChart(`chart-${asin}`, points, asin);
-    } catch (e) { console.error(e); }
-  }
-})();
-</script>
+      new Chart(el, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            tension: .28,
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display:false },
+            tooltip: { enabled:true }
+          },
+          scales: {
+            x: {
+              ticks: { color: "rgba(255,255,255,.5)", maxRotation:0, autoSkip:true },
+              grid: { color:"rgba(255,255,255,.05)" }
+            },
+            y: {
+              position: "left",
+              ticks: { color: "rgba(255,255,255,.55)" },
+              grid: { color:"rgba(255,255,255,.06)" }
+            }
+          }
+        }
+      });
+    }
+
+    (async () => {
+      renderMarketingBanners();
+
+      const asins = {{ items|map(attribute="asin")|list|tojson }};
+      for (const asin of asins) {
+        try {
+          const points = await loadHistory(asin);
+          buildChart(asin, points || []);
+        } catch (e) {}
+      }
+    })();
+  </script>
 </body>
 </html>
