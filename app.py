@@ -696,175 +696,68 @@ def history_json(asin):
 
 # ---------------- Admin routes ----------------
 
-@app.route("/admin/dashboard")
+@app.route("/admin")
 @admin_required
-def admin_dashboard():
+def admin_portal():
+    tab = request.args.get("tab", "dashboard")
     conn = db_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT COUNT(*) as c FROM users")
-    total_users = cur.fetchone()["c"]
+    # Data for Sidebar / Common
+    cur.execute("SELECT COUNT(*) as c FROM users WHERE is_approved = FALSE")
+    pending_count = cur.fetchone()["c"]
 
-    cur.execute("SELECT COUNT(*) as c FROM items")
-    total_items = cur.fetchone()["c"]
+    # --- VIEW: DASHBOARD ---
+    if tab == "dashboard":
+        cur.execute("SELECT COUNT(*) as c FROM users")
+        total_users = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) as c FROM items")
+        total_items = cur.fetchone()["c"]
+        cur.execute("SELECT asin, COUNT(*) as c FROM items GROUP BY asin ORDER BY c DESC LIMIT 5")
+        trending = cur.fetchall()
+        cur.execute("SELECT MAX(ts) as last_run FROM price_history")
+        lr = cur.fetchone()
+        last_run = lr["last_run"] if lr else "Never"
+        
+        data = {
+            "total_users": total_users,
+            "total_items": total_items,
+            "trending": trending,
+            "last_run": last_run,
+            "announcement": get_system_announcement()
+        }
 
-    cur.execute("SELECT asin, COUNT(*) as c FROM items GROUP BY asin ORDER BY c DESC LIMIT 5")
-    trending = cur.fetchall()
-
-    announcement = get_system_announcement()
-
-    conn.close()
-    return render_template(
-        "admin_dashboard.html",
-        total_users=total_users,
-        total_items=total_items,
-        trending=trending,
-        announcement=announcement
-    )
-
-@app.route("/admin/set-announcement", methods=["POST"])
-@admin_required
-def set_announcement():
-    txt = request.form.get("text", "")
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO system_settings (key, value)
-        VALUES ('announcement', %s)
-        ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value
-    """, (txt,))
-    conn.commit()
-    conn.close()
-    flash("Announcement updated", "ok")
-    return redirect(url_for("admin_dashboard"))
-
-@app.route("/admin/force-update", methods=["POST"])
-@admin_required
-def force_update():
-    threading.Thread(target=run_global_scrape, daemon=True).start()
-    flash("Forced Global Update Started...", "ok")
-    return redirect(url_for("admin_dashboard"))
-
-@app.route("/admin/cleanup-ghosts", methods=["POST"])
-@admin_required
-def cleanup_ghosts():
-    conn = db_conn()
-    cur = conn.cursor()
-    cutoff = (datetime.utcnow() - timedelta(days=90)).strftime("%Y-%m-%d")
-    cur.execute("DELETE FROM items WHERE user_id IN (SELECT id FROM users WHERE last_login_at < %s)", (cutoff,))
-    deleted = cur.rowcount
-    conn.commit()
-    conn.close()
-    flash(f"Cleaned {deleted} ghost items.", "ok")
-    return redirect(url_for("admin_dashboard"))
-
-@app.route("/admin/items", methods=["GET"])
-@admin_required
-def admin_items():
-    conn = db_conn()
-    cur = conn.cursor()
-
-    sort_by = request.args.get("sort", "latest")
-    user_filter = request.args.get("user_filter")
-
-    base_query = """
-        SELECT i.*, u.email AS user_email,
-               (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
-               (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text,
-               (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
-        FROM items i
-        JOIN users u ON u.id=i.user_id
-    """
-
-    params = []
-    if user_filter:
-        base_query += " WHERE u.id = %s "
-        params.append(user_filter)
-
-    if sort_by == "az_title":
-        base_query += " ORDER BY latest_name ASC"
-    elif sort_by == "az_user":
-        base_query += " ORDER BY u.email ASC"
-    else:
-        base_query += " ORDER BY i.created_at DESC"
-
-    cur.execute(base_query, tuple(params))
-    items = cur.fetchall()
-
-    cur.execute("SELECT id, email FROM users ORDER BY email")
-    users = cur.fetchall()
-
-    conn.close()
-    return render_template("admin_items.html", items=items, users=users, current_filter=user_filter)
-
-@app.route("/admin/users", methods=["GET"])
-@admin_required
-def admin_users():
-    conn = db_conn()
-    cur = conn.cursor()
-
-    status = request.args.get("status", "all")
-    if status == "pending":
-        cur.execute("SELECT * FROM users WHERE is_approved = FALSE ORDER BY created_at DESC")
-    else:
+    # --- VIEW: ACTIVE USERS ---
+    elif tab == "active_users":
         cur.execute("SELECT * FROM users WHERE is_approved = TRUE ORDER BY created_at DESC")
-    users = cur.fetchall()
+        data = {"users": cur.fetchall()}
 
-    cur.execute("""
-        SELECT i.user_id, i.asin,
-               (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) as title
-        FROM items i
-    """)
-    all_items = cur.fetchall()
+    # --- VIEW: PENDING USERS ---
+    elif tab == "pending_users":
+        cur.execute("SELECT * FROM users WHERE is_approved = FALSE ORDER BY created_at DESC")
+        data = {"users": cur.fetchall()}
 
-    user_items_map = {}
-    for item in all_items:
-        uid = item["user_id"]
-        user_items_map.setdefault(uid, []).append(item)
+    # --- VIEW: USERS ITEMS ---
+    elif tab == "items":
+        user_filter = request.args.get("user_filter")
+        query = """
+            SELECT i.*, u.email AS user_email,
+                   (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
+                   (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text
+            FROM items i JOIN users u ON u.id=i.user_id
+        """
+        if user_filter:
+            query += " WHERE u.id = %s"
+            cur.execute(query + " ORDER BY i.created_at DESC", (user_filter,))
+        else:
+            cur.execute(query + " ORDER BY i.created_at DESC")
+        
+        items = cur.fetchall()
+        cur.execute("SELECT id, email FROM users ORDER BY email")
+        data = {"items": items, "all_users": cur.fetchall(), "current_filter": user_filter}
 
     conn.close()
-    return render_template("admin_users.html", users=users, user_items_map=user_items_map, current_status=status)
-
-@app.route("/admin/user/<int:user_id>/approve", methods=["POST"])
-@admin_required
-def admin_user_approve(user_id):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET is_approved = TRUE WHERE id=%s", (user_id,))
-    conn.commit()
-    conn.close()
-    return redirect(url_for("admin_users", status="pending"))
-
-@app.route("/admin/user/<int:user_id>/pause", methods=["POST"])
-@admin_required
-def admin_user_pause(user_id):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET is_paused = NOT is_paused WHERE id=%s", (user_id,))
-    conn.commit()
-    conn.close()
-    return redirect(url_for("admin_users"))
-
-@app.route("/admin/user/<int:user_id>/delete", methods=["POST"])
-@admin_required
-def admin_user_delete(user_id):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
-    conn.commit()
-    conn.close()
-    return redirect(request.referrer or url_for("admin_users"))
-
-@app.route("/admin/item/<int:item_id>/delete", methods=["POST"])
-@admin_required
-def admin_delete_item_by_id(item_id):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM price_history WHERE item_id=%s", (item_id,))
-    cur.execute("DELETE FROM items WHERE id=%s", (item_id,))
-    conn.commit()
-    conn.close()
-    return redirect(url_for("admin_items"))
+    return render_template("admin.html", tab=tab, data=data, pending_count=pending_count)
 
 # ---------------- Auth routes ----------------
 
