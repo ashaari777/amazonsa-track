@@ -698,6 +698,11 @@ def index():
 
     cur.execute("SELECT * FROM items WHERE user_id=%s ORDER BY created_at DESC", (uid,))
     items = cur.fetchall()
+    # Backward-compatible target field: always provide target_price_value to templates
+for it in items:
+    if "target_price_value" not in it:
+        it["target_price_value"] = it.get("target_price")
+
 
     announcement = get_system_announcement()
 
