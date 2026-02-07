@@ -262,7 +262,7 @@ def get_location_from_ip(ip):
 def parse_money_value(t):
     if not t:
         return None
-    m = re.search(r"([\d,]+(?:\.[\d]+)?)", t.replace("Ù«", "."))
+    m = re.search(r"([\d,]+(?:\.[\d]+)?)", t.replace("٫", "."))
     if not m:
         return None
     try:
@@ -804,12 +804,9 @@ def delete(asin):
     return redirect(url_for("index"))
 
 
-# Backward-compatible endpoint name used by older templates
-@app.route("/set-target-price/<int:item_id>", methods=["POST"])
+@app.route("/set-target/<int:item_id>", methods=["POST"])
 @login_required
-def set_target_price(item_id):
-    """Alias for set_target (older templates used endpoint name set_target_price)."""
-    return set_target(item_id)
+def set_target(item_id):
     target = (request.form.get("target") or request.form.get("target_price") or request.form.get("target_price_value") or "").strip()
     try:
         target_val = float(target)
@@ -830,6 +827,14 @@ def set_target_price(item_id):
     flash("Target updated.", "ok")
     return redirect(url_for("index"))
 
+
+
+# Backward-compatible endpoint name used by older templates
+@app.route("/set-target-price/<int:item_id>", methods=["POST"])
+@login_required
+def set_target_price(item_id):
+    """Alias for set_target (older templates used endpoint name set_target_price)."""
+    return set_target(item_id)
 
 @app.route("/update/<asin>", methods=["POST"])
 @login_required
