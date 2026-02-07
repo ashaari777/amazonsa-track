@@ -746,9 +746,10 @@ def index():
         is_admin=(session.get("role") == "admin")
         or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
     )
+@app.route("/add", methods=["POST"])
 @login_required
 def add():
-    raw = (request.form.get("item") or "").strip()
+    raw = request.form.get("item", "").strip()
     asin = extract_asin(raw)
     if not asin:
         flash("Please paste a valid Amazon.sa link or ASIN.", "error")
@@ -765,7 +766,7 @@ def add():
     try:
         cur.execute(
             "INSERT INTO items(user_id, asin, url) VALUES(%s,%s,%s)",
-            (uid, asin, url),
+            (uid, asin, url)
         )
         conn.commit()
     except Exception:
@@ -773,6 +774,22 @@ def add():
         conn.close()
         flash("This item is already in your list.", "error")
         return redirect(url_for("index"))
+
+    # Immediately scrape once
+    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
+    row = cur.fetchone()
+    conn.close()
+
+    if row:
+        try:
+            data = run_async(scrape_one_amazon_sa, url)
+            write_history(row["id"], data)
+        except Exception:
+            pass
+
+    flash("Item added.", "ok")
+    return redirect(url_for("index"))
+
 
     cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
     row = cur.fetchone()
