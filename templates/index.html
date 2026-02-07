@@ -211,15 +211,22 @@
 
     /* Chart */
     .chart-box { height: 180px; width: 100%; margin-top: auto; }
-    .chart-info {
-        font-size: 0.85em;
-        color: var(--gold);
-        text-align: left;
-        height: 20px;
-        margin-top: 5px;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
+    /* We show the active hover timestamp below the chart (Keepa-like)
+       so we don't need the old info line inside the chart box. */
+    .chart-info { display:none; }
+    .chart-date{ margin-top: 8px; font-size: .85em; color: rgba(255,255,255,0.55); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+    .actions-row{ display:flex; gap:10px; margin-top: 14px; align-items:center; }
+    .target-box{ flex:1; display:flex; gap:10px; align-items:center; border-radius:16px; padding: 12px 14px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); }
+    .target-label{ color: rgba(255,255,255,0.55); font-weight:700; font-size:.9rem; white-space:nowrap; }
+    .target-input{ flex:1; min-width: 140px; border-radius:12px; padding:12px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.20); color:#fff; outline:none; }
+    .del-btn{ padding: 12px 16px; border-radius: 14px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); color: rgba(255,90,90,0.95); font-weight: 900; cursor:pointer; }
+    .del-btn:hover{ background: rgba(255,90,90,0.10); border-color: rgba(255,90,90,0.22); }
+
+    @media (max-width: 520px){
+      .actions-row{ flex-wrap:wrap; }
+      .target-box{ width:100%; }
+      .del-btn{ width:100%; }
     }
 
     /* --- MARKETING BANNERS (Top deals) --- */
@@ -473,10 +480,6 @@
                       <button type="button" class="pill pill-more" onclick="toggleCoupon('{{ it.asin }}')">more</button>
                     {% endif %}
                   </div>
-
-                  <form method="post" action="/delete/{{ it.asin }}" onsubmit="return confirm('Delete item?')">
-                    <button class="top-btn" type="submit">Delete</button>
-                  </form>
                 </div>
 
                 {% if it.coupon_text %}
@@ -490,14 +493,17 @@
               <div id="info-{{ it.asin }}" class="chart-info"></div>
             </div>
 
-            <div style="display:flex; gap:10px; margin-top: 14px; flex-wrap:wrap;">
-              <form method="post" action="/update/{{ it.asin }}" style="flex:1;">
-                <button class="btn-glow" type="submit" style="width:100%;">Update now</button>
+            <div id="date-{{ it.asin }}" class="chart-date">&nbsp;</div>
+
+            <div class="actions-row">
+              <form method="post" action="/set-target/{{ it.id }}" class="target-box">
+                <div class="target-label">Target price ({{ '—' if it.target_price_value is none else ('SAR ' ~ ('%.2f'|format(it.target_price_value|float))) }})</div>
+                <input name="target" class="target-input" placeholder="Target SAR" inputmode="decimal" />
+                <button class="btn-glow" type="submit" style="padding:12px 18px;">Set</button>
               </form>
 
-              <form method="post" action="/set-target/{{ it.id }}" style="display:flex; gap:8px; flex:1; min-width:220px;">
-                <input name="target" placeholder="Target SAR" style="flex:1; border-radius:14px; padding:12px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#fff;">
-                <button class="btn-glow" type="submit" style="padding:12px 14px;">Set</button>
+              <form method="post" action="/delete/{{ it.asin }}" onsubmit="return confirm('Delete item?')">
+                <button class="del-btn" type="submit">Delete</button>
               </form>
             </div>
           </div>
@@ -523,13 +529,14 @@
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
-    const infoDiv = document.getElementById('info-' + asin);
+    const dateDiv = document.getElementById('date-' + asin);
 
     const raw = (points || []).filter(p => p.price_value > 0);
     if (raw.length === 0) return;
 
     // Keepa style: extend to NOW
     const lastPoint = raw[raw.length - 1];
+    if (dateDiv) dateDiv.textContent = lastPoint.ts || '';
     const now = new Date();
     const lastDate = new Date((lastPoint.ts || '').replace(' ', 'T') + 'Z');
 
@@ -568,6 +575,16 @@
     if (curEl) curEl.textContent = fmtSAR(current);
     if (lEl) lEl.textContent = noChange ? 'L: —' : `L: ${fmtSAR(minV).replace('SAR ', '')}`;
     if (hEl) hEl.textContent = noChange ? 'H: —' : `H: ${fmtSAR(maxV).replace('SAR ', '')}`;
+
+    // Tighten the visible y-range (Keepa-like zoom)
+    let suggestedMin = undefined;
+    let suggestedMax = undefined;
+    if (minV !== null && maxV !== null) {
+      const span = Math.max(0, maxV - minV);
+      const pad = Math.max(1, span * 0.20, maxV * 0.02);
+      suggestedMin = Math.max(0, minV - pad);
+      suggestedMax = maxV + pad;
+    }
 
     const gradient = ctx.createLinearGradient(0, 0, 0, 180);
     gradient.addColorStop(0, 'rgba(218, 174, 81, 0.35)');
@@ -614,6 +631,7 @@
           tooltip: {
             intersect: false,
             mode: 'index',
+            displayColors: false,
             backgroundColor: 'rgba(15, 12, 41, 0.92)',
             borderColor: 'rgba(218, 174, 81, 0.30)',
             borderWidth: 1,
@@ -625,7 +643,7 @@
               title: (items) => {
                 if (!items?.length) return '';
                 const t = items[0].label || '';
-                if (infoDiv) infoDiv.textContent = t;
+                if (dateDiv) dateDiv.textContent = t;
                 return '';
               }
             }
@@ -634,6 +652,8 @@
         scales: {
           x: { display: false },
           y: {
+            suggestedMin: suggestedMin,
+            suggestedMax: suggestedMax,
             ticks: { callback: (v) => v.toFixed(0) },
             grid: { color: 'rgba(255,255,255,0.06)' }
           }
