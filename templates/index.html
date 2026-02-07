@@ -16,6 +16,8 @@
         --text-muted: rgba(255,255,255,0.65);
         --accent: #d53369;
         --gold: #daae51;
+        /* Keep marketing card same height as item cards */
+        --card-h: 420px;
     }
     *{ box-sizing:border-box; }
     body {
@@ -145,6 +147,7 @@
         flex-direction: column;
         position: relative;
         overflow: hidden;
+        height: var(--card-h);
     }
 
     .card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,0.2); }
@@ -214,17 +217,12 @@
     /* We show the active hover timestamp below the chart (Keepa-like)
        so we don't need the old info line inside the chart box. */
     .chart-info { display:none; }
-    /* User requested: no date/time text below the chart (we keep element for JS but hide it) */
-    .chart-date{ display:none; }
-
-    /* Price pills colors */
-    .pill-low{ border-color: rgba(70, 220, 140, 0.28); background: rgba(70, 220, 140, 0.10); color: rgba(140, 255, 205, 0.95); }
-    .pill-high{ border-color: rgba(255, 80, 110, 0.28); background: rgba(255, 80, 110, 0.10); color: rgba(255, 150, 170, 0.95); }
+    /* chart-date removed (we no longer show date/time under the chart) */
 
     .actions-row{ display:flex; gap:10px; margin-top: 14px; align-items:center; }
-    .target-box{ flex:1; display:flex; gap:10px; align-items:center; border-radius:16px; padding: 12px 14px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); }
-    .target-label{ color: rgba(255,255,255,0.55); font-weight:700; font-size:.9rem; white-space:nowrap; }
-    .target-input{ flex:1; min-width: 140px; border-radius:12px; padding:12px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.20); color:#fff; outline:none; }
+    .target-box{ flex:1; display:flex; gap:10px; align-items:center; border-radius:16px; padding: 10px 12px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); min-width: 0; }
+    .target-label{ color: rgba(255,255,255,0.55); font-weight:800; font-size:.9rem; white-space:nowrap; }
+    .target-input{ flex:1; min-width: 0; border-radius:12px; padding:12px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.20); color:#fff; outline:none; }
     .del-btn{ padding: 12px 16px; border-radius: 14px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); color: rgba(255,90,90,0.95); font-weight: 900; cursor:pointer; }
     .del-btn:hover{ background: rgba(255,90,90,0.10); border-color: rgba(255,90,90,0.22); }
 
@@ -248,94 +246,133 @@
         letter-spacing: .2px;
         margin:0;
     }
-    /* Make marketing card match item-card height and fit exactly 5 banners */
-    #marketing-wrap{ height: 430px; display:flex; flex-direction:column; }
-    .marketing-list{ flex:1; display:flex; flex-direction:column; gap:10px; min-height:0; }
-
-    /* New banner style inspired by your purple/yellow "ticket" banner */
+    .marketing-sub{
+        color: var(--text-muted);
+        font-size: .85em;
+        font-weight: 700;
+    }
+    /* The list fills the card; each banner shares the available height */
+    .marketing-list{ display:flex; flex-direction:column; gap: 8px; flex:1; min-height:0; }
     .deal-banner{
-        flex:1;
-        min-height:0;
         position: relative;
         overflow: hidden;
         border-radius: 18px;
-        border: 1px solid rgba(255,255,255,0.12);
-        box-shadow: 0 14px 40px rgba(0,0,0,0.20);
-        background: linear-gradient(90deg, #6b1b88 0%, #6b1b88 52%, #f2c100 52%, #f2c100 100%);
-        padding: 10px 12px;
+        border: 2px solid rgba(255, 190, 90, 0.55);
+        background:
+          radial-gradient(120% 200% at 0% 0%, rgba(255, 225, 155, 0.55), rgba(255, 180, 60, 0.20) 45%, rgba(255, 150, 40, 0.10) 70%, rgba(0,0,0,0) 100%),
+          linear-gradient(180deg, rgba(255, 232, 170, 0.60), rgba(255, 198, 80, 0.28));
+        box-shadow: 0 18px 55px rgba(255, 170, 50, 0.15);
+        padding: 8px 10px 7px 10px;
+        flex: 1;
+        min-height: 0;
+    }
+    .deal-banner::before{
+        content:"";
+        position:absolute;
+        inset:8px;
+        border-radius: 14px;
+        border: 2px dashed rgba(255, 220, 160, 0.70);
+        pointer-events:none;
+        opacity: 0.7;
+    }
+    .deal-top{
+        position: relative;
+        z-index: 1;
+        display:flex;
+        justify-content:space-between;
+        align-items:flex-start;
+        gap:12px;
+        margin-bottom: 6px;
+    }
+    .deal-title{
+        font-weight: 950;
+        font-size: 0.80rem;
+        line-height:1.12;
+        color: rgba(40, 30, 18, 0.95);
+        text-shadow: 0 1px 0 rgba(255,255,255,0.35);
+        max-width: 100%;
+        display:-webkit-box;
+        -webkit-line-clamp: 1;
+        -webkit-box-orient: vertical;
+        overflow:hidden;
+    }
+    .deal-body{
+        position: relative;
+        z-index: 1;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap: 10px;
+        padding-top: 4px;
+    }
+    .deal-price{
+        font-size: 0.98rem;
+        font-weight: 1000;
+        color: rgba(35, 25, 12, 0.95);
+        letter-spacing: .2px;
+        text-shadow: 0 1px 0 rgba(255,255,255,0.35);
+        white-space:nowrap;
+    }
+    .deal-mid{
         display:flex;
         align-items:center;
         gap: 12px;
+        margin-left:auto;
     }
-    /* Confetti on the yellow side */
-    .deal-banner::after{
-        content:"";
-        position:absolute;
-        inset:0;
-        background:
-          radial-gradient(circle at 75% 25%, rgba(255,255,255,0.18) 0 2px, transparent 3px),
-          radial-gradient(circle at 85% 55%, rgba(255,255,255,0.14) 0 2px, transparent 3px),
-          radial-gradient(circle at 70% 70%, rgba(255,255,255,0.10) 0 2px, transparent 3px);
-        opacity: .65;
-        pointer-events:none;
-        mix-blend-mode: soft-light;
+    .deal-divider{
+        width: 1px;
+        height: 30px;
+        background: rgba(40,30,18,0.22);
     }
-    /* Drip edge */
-    .deal-drip{
-        position:absolute;
-        left: 52%;
-        top: -10px;
-        bottom: -10px;
-        width: 34px;
-        transform: translateX(-50%);
-        background: #6b1b88;
-        border-radius: 22px;
+    .deal-off{
+        display:flex;
+        align-items:baseline;
+        gap: 2px;
+        color: rgba(35, 25, 12, 0.95);
+        text-shadow: 0 1px 0 rgba(255,255,255,0.35);
+    }
+    .deal-off .n{
+        font-size: 2.0rem;
+        font-weight: 1000;
+        line-height: 1;
+        letter-spacing: -1px;
+    }
+    .deal-off .pct{
+        font-size: 0.95rem;
+        font-weight: 950;
+        line-height: 1;
+        margin-left: 2px;
+    }
+    .deal-footer{
+        position: relative;
         z-index: 1;
-        box-shadow:
-          0 22px 0 0 #6b1b88,
-          0 44px 0 0 #6b1b88,
-          0 66px 0 0 #6b1b88,
-          0 88px 0 0 #6b1b88;
-        opacity: 0.98;
-    }
-    .deal-left, .deal-right{ position:relative; z-index:2; }
-    .deal-left{ flex:1.25; display:flex; align-items:center; }
-    .deal-title{
-        font-weight: 1000;
-        font-size: 0.92rem;
-        line-height: 1.15;
-        color: rgba(255,255,255,0.95);
-        text-shadow: 0 2px 12px rgba(0,0,0,0.22);
-        overflow:hidden;
-        text-overflow:ellipsis;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-    }
-    .deal-right{ flex:1; display:flex; align-items:center; justify-content:flex-end; gap: 10px; }
-    .deal-price{
-        font-weight: 1000;
-        font-size: 1.05rem;
-        color: rgba(60,25,0,0.90);
-        text-shadow: 0 1px 0 rgba(255,255,255,0.30);
-        white-space:nowrap;
+        display:flex;
+        align-items:center;
+        justify-content:flex-end;
+        margin-top: 6px;
     }
     .deal-add-btn{
-        border:0;
-        cursor:pointer;
-        font-weight: 950;
-        border-radius: 12px;
-        padding: 8px 14px;
+        background: linear-gradient(180deg, rgba(255, 165, 65, 0.98), rgba(245, 125, 35, 0.98));
+        border: 0;
         color: rgba(255,255,255,0.96);
-        background: rgba(10, 60, 140, 0.92);
-        box-shadow: 0 10px 26px rgba(0,0,0,0.22);
+        font-weight: 950;
+        font-size: 0.95rem;
+        padding: 8px 18px;
+        border-radius: 999px;
+        cursor:pointer;
+        box-shadow: 0 14px 35px rgba(0,0,0,0.18);
+        transition: transform .12s ease, box-shadow .12s ease;
     }
-    .deal-add-btn:hover{ transform: translateY(-1px); }
+    .deal-add-btn:hover{ transform: translateY(-1px); box-shadow: 0 18px 45px rgba(0,0,0,0.22); }
 
-    @media (max-width: 900px){
-      #marketing-wrap{ height: 410px; }
-      .deal-title{ -webkit-line-clamp: 1; }
+    @media (max-width: 768px){
+        .deal-price{ font-size: 1.15rem; }
+        .deal-off .n{ font-size: 2.1rem; }
     }
+
+    /* Price pills */
+    .pill-low{ color:#2ee59d; border-color: rgba(46,229,157,0.35); background: rgba(46,229,157,0.10); }
+    .pill-high{ color:#ff6b6b; border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.10); }
 
     /* Mobile */
     @media (max-width: 900px) {
@@ -424,7 +461,7 @@
       <div class="grid">
 
         <div class="card" id="marketing-wrap" style="display:none;">
-          <div class="marketing-head">
+            <div class="marketing-head">
             <h2>Top deals right now</h2>
           </div>
           <div class="marketing-list" id="marketing-list"></div>
@@ -462,12 +499,12 @@
               <div id="info-{{ it.asin }}" class="chart-info"></div>
             </div>
 
-            <div id="date-{{ it.asin }}" class="chart-date">&nbsp;</div>
+
 
             <div class="actions-row">
               <form method="post" action="/set-target/{{ it.id }}" class="target-box">
-                <div class="target-label">Target price ({{ '—' if it.target_price_value is none else ('SAR ' ~ ('%.2f'|format(it.target_price_value|float))) }})</div>
-                <input name="target" class="target-input" placeholder="Target SAR" inputmode="decimal" />
+                <div class="target-label">Target price:</div>
+                <input name="target" class="target-input" placeholder="" inputmode="decimal" />
                 <button class="btn-glow" type="submit" style="padding:12px 18px;">Set</button>
               </form>
 
@@ -498,14 +535,14 @@
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
-    const dateDiv = document.getElementById('date-' + asin);
+
 
     const raw = (points || []).filter(p => p.price_value > 0);
     if (raw.length === 0) return;
 
     // Keepa style: extend to NOW
     const lastPoint = raw[raw.length - 1];
-    if (dateDiv) dateDiv.textContent = lastPoint.ts || '';
+
     const now = new Date();
     const lastDate = new Date((lastPoint.ts || '').replace(' ', 'T') + 'Z');
 
@@ -612,18 +649,36 @@
               title: (items) => {
                 if (!items?.length) return '';
                 const t = items[0].label || '';
-                if (dateDiv) dateDiv.textContent = t;
                 return '';
               }
             }
           }
         },
         scales: {
-          x: { display: false },
+          x: {
+            display: true,
+            grid: { display: false },
+            ticks: {
+              maxTicksLimit: 6,
+              autoSkip: true,
+              callback: function(value){
+                const lbl = this.getLabelForValue(value) || '';
+                // Expect: "YYYY-MM-DD HH:MM:SS" -> show "D Mon" (e.g. 1 Jan)
+                const d = lbl.split(' ')[0] || '';
+                const parts = d.split('-');
+                if(parts.length !== 3) return '';
+                const day = String(parseInt(parts[2],10));
+                const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Math.max(0, Math.min(11, parseInt(parts[1],10)-1))];
+                return day + ' ' + mon;
+              }
+            },
+            title: { display: false }
+          },
           y: {
             suggestedMin: suggestedMin,
             suggestedMax: suggestedMax,
             ticks: { callback: (v) => v.toFixed(0) },
+            title: { display: true, text: 'SAR' },
             grid: { color: 'rgba(255,255,255,0.06)' }
           }
         }
@@ -661,30 +716,58 @@
     const list = document.getElementById("marketing-list");
     if(!wrap || !list) return;
 
-    let deals = (marketingDeals || []).slice(0, 5);
+    const deals = (marketingDeals || []).slice(0, 5);
     if(!deals.length) return;
 
-    // Always render 5 banners to keep the card size consistent
-    while(deals.length < 5) deals.push(null);
+    // Always render 5 banners (fill empty slots with placeholders)
+    const slots = Array.from({length:5}, (_,i) => deals[i] || null);
 
-    list.innerHTML = deals.map(d => {
-      const isPlaceholder = !d;
-      const asin = isPlaceholder ? "" : (d.asin || "");
-      const title = isPlaceholder ? "More deals coming soon" : (d.title || d.asin);
-      const price = isPlaceholder ? "SAR --" : (d.price_text || "SAR --");
-      const btn = isPlaceholder
-        ? `<button class="deal-add-btn" disabled style="opacity:.45; cursor:not-allowed;">add</button>`
-        : `<button class="deal-add-btn" onclick="quickAddAsin('${escapeHtml(asin)}')">add</button>`;
+    list.innerHTML = slots.map(d => {
+      if(!d){
+        return `
+          <div class="deal-banner" style="opacity:0.45;">
+            <div class="deal-top">
+              <div class="deal-title">&nbsp;</div>
+            </div>
+            <div class="deal-body">
+              <div class="deal-price">&nbsp;</div>
+              <div class="deal-mid">
+                <div class="deal-divider"></div>
+                <div class="deal-off">
+                  <div class="n">&nbsp;</div>
+                  <div class="pct">%</div>
+                </div>
+              </div>
+            </div>
+            <div class="deal-footer">
+              <button class="deal-add-btn" style="opacity:0.35; pointer-events:none;">add</button>
+            </div>
+          </div>
+        `;
+      }
 
+      const pct = (d.best_percent !== null && d.best_percent !== undefined) ? String(d.best_percent) : "--";
+      const title = d.title || d.asin;
+      const price = d.price_text || "SAR --";
       return `
-        <div class="deal-banner" ${isPlaceholder ? 'style="opacity:.70"' : ''} data-asin="${escapeHtml(asin)}">
-          <span class="deal-drip"></span>
-          <div class="deal-left">
+        <div class="deal-banner" data-asin="${escapeHtml(d.asin)}">
+          <div class="deal-top">
             <div class="deal-title">${escapeHtml(title)}</div>
           </div>
-          <div class="deal-right">
+
+          <div class="deal-body">
             <div class="deal-price">${escapeHtml(price)}</div>
-            ${btn}
+            <div class="deal-mid">
+              <div class="deal-divider"></div>
+              <div class="deal-off">
+                <div class="n">${escapeHtml(pct)}</div>
+                <div class="pct">%</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="deal-footer">
+            <button class="deal-add-btn" onclick="quickAddAsin('${escapeHtml(d.asin)}')">add</button>
           </div>
         </div>
       `;
