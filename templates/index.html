@@ -213,10 +213,28 @@
     .chart-box { height: 180px; width: 100%; margin-top: auto; }
     /* We show the active hover timestamp below the chart (Keepa-like)
        so we don't need the old info line inside the chart box. */
-    .chart-info { display:none; }
-    .chart-date{ margin-top: 8px; font-size: .85em; color: rgba(255,255,255,0.55); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .chart-date{ margin-top: 8px; font-size: .85em; color: rgba(255,255,255,0.55); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
     .actions-row{ display:flex; gap:10px; margin-top: 14px; align-items:center; }
+.tp-label{
+        font-weight: 900;
+        color: rgba(255,255,255,0.85);
+        white-space:nowrap;
+    }
+    .tp-form{
+        display:flex;
+        gap:10px;
+        align-items:center;
+        flex:1;
+        min-width: 0;
+    }
+    .tp-form .target-input{
+        flex:1;
+        min-width: 0;
+    }
+    .tp-del{
+        margin-left:auto;
+    }
     .target-box{ flex:1; display:flex; gap:10px; align-items:center; border-radius:16px; padding: 12px 14px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); }
     .target-label{ color: rgba(255,255,255,0.55); font-weight:700; font-size:.9rem; white-space:nowrap; }
     .target-input{ flex:1; min-width: 140px; border-radius:12px; padding:12px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.20); color:#fff; outline:none; }
@@ -251,8 +269,59 @@
     .marketing-list{
         display:flex;
         flex-direction:column;
-        gap: 14px;
+        gap: 12px;
     }
+
+    .deal-mini{
+        border-radius:14px;
+        padding:12px;
+        border: 1px solid rgba(255,190,90,0.35);
+        background: rgba(255,190,90,0.12);
+    }
+    .deal-mini-title{
+        font-weight: 900;
+        font-size: .95rem;
+        margin-bottom: 8px;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+    }
+    .deal-mini-row{
+        display:flex;
+        align-items:center;
+        gap:10px;
+    }
+    .deal-mini-price{
+        flex:1;
+        font-weight: 950;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+    }
+    .deal-mini-pct{
+        font-weight: 950;
+        padding:6px 10px;
+        border-radius:999px;
+        background: rgba(255,190,90,0.18);
+        border: 1px solid rgba(255,190,90,0.35);
+        white-space:nowrap;
+    }
+    .deal-mini-add{
+        border:none;
+        cursor:pointer;
+        font-weight: 950;
+        padding:8px 16px;
+        border-radius:999px;
+        background: rgba(255,165,65,0.95);
+        color:#1b1208;
+        white-space:nowrap;
+    }
+    .deal-empty{
+        background: rgba(255,255,255,0.03);
+        border: 1px dashed rgba(255,255,255,0.12);
+        min-height:62px;
+    }
+
     .deal-banner{
         position: relative;
         overflow: hidden;
@@ -456,7 +525,7 @@
         <div class="card" id="marketing-wrap" style="display:none;">
           <div class="marketing-head">
             <h2>Top deals right now</h2>
-            <div class="marketing-sub">Tap “add” to monitor</div>
+            
           </div>
           <div class="marketing-list" id="marketing-list"></div>
         </div>
@@ -490,22 +559,24 @@
 
             <div class="chart-box">
               <canvas id="chart-{{ it.asin }}"></canvas>
-              <div id="info-{{ it.asin }}" class="chart-info"></div>
-            </div>
+</div>
 
             <div id="date-{{ it.asin }}" class="chart-date">&nbsp;</div>
 
             <div class="actions-row">
-              <form method="post" action="/set-target/{{ it.id }}" class="target-box">
-                <div class="target-label">Target price ({{ '—' if it.target_price_value is none else ('SAR ' ~ ('%.2f'|format(it.target_price_value|float))) }})</div>
-                <input name="target" class="target-input" placeholder="Target SAR" inputmode="decimal" />
+              <div class="tp-label">Target price:</div>
+
+              <form method="post" action="/set-target/{{ it.id }}" class="tp-form">
+                {% set tp = it.get('target_price_value', it.get('target_price')) %}
+                <input name="target" class="target-input" value="{{ '' if tp is none else ('%.2f'|format(tp|float)) }}" inputmode="decimal" />
                 <button class="btn-glow" type="submit" style="padding:12px 18px;">Set</button>
               </form>
 
-              <form method="post" action="/delete/{{ it.asin }}" onsubmit="return confirm('Delete item?')">
+              <form method="post" action="/delete/{{ it.asin }}" class="tp-del" onsubmit="return confirm('Delete item?')">
                 <button class="del-btn" type="submit">Delete</button>
               </form>
             </div>
+</div>
           </div>
         {% endfor %}
 
@@ -692,39 +763,40 @@
     const list = document.getElementById("marketing-list");
     if(!wrap || !list) return;
 
-    const deals = (marketingDeals || []).slice(0, 5);
-    if(!deals.length) return;
+    const dealsRaw = (marketingDeals || []).filter(d => d);
+    if(!dealsRaw.length){
+      wrap.style.display = "none";
+      return;
+    }
 
-    list.innerHTML = deals.map(d => {
+    // Always render 5 slots (pad with empties) to keep card height consistent
+    const slots = [];
+    for(let i=0;i<5;i++){
+      slots.push(dealsRaw[i] || null);
+    }
+
+    wrap.style.display = "block";
+    list.innerHTML = slots.map(d => {
+      if(!d){
+        return `<div class="deal-mini deal-empty"></div>`;
+      }
       const pct = (d.best_percent !== null && d.best_percent !== undefined) ? String(d.best_percent) : "--";
       const title = d.title || d.asin;
       const price = d.price_text || "SAR --";
+      const asin = d.asin || "";
       return `
-        <div class="deal-banner" data-asin="${escapeHtml(d.asin)}">
-          <div class="deal-top">
-            <div class="deal-title">${escapeHtml(title)}</div>
-          </div>
-
-          <div class="deal-body">
-            <div class="deal-price">${escapeHtml(price)}</div>
-            <div class="deal-mid">
-              <div class="deal-divider"></div>
-              <div class="deal-off">
-                <div class="n">${escapeHtml(pct)}</div>
-                <div class="pct">%</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="deal-footer">
-            <button class="deal-add-btn" onclick="quickAddAsin('${escapeHtml(d.asin)}')">add</button>
+        <div class="deal-mini">
+          <div class="deal-mini-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
+          <div class="deal-mini-row">
+            <div class="deal-mini-price">${escapeHtml(price)}</div>
+            <div class="deal-mini-pct">${escapeHtml(pct)}%</div>
+            <button class="deal-mini-add" type="button" onclick="quickAddAsin('${escapeHtml(asin)}')">add</button>
           </div>
         </div>
       `;
     }).join("");
-
-    wrap.style.display = "";
   }
+
 
   
 function toggleCoupon(asin){
