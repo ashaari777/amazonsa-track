@@ -804,10 +804,13 @@ def delete(asin):
     return redirect(url_for("index"))
 
 
-@app.route("/set-target/<int:item_id>", methods=["POST"])
+# Backward-compatible endpoint name used by older templates
+@app.route("/set-target-price/<int:item_id>", methods=["POST"])
 @login_required
-def set_target(item_id):
-    target = (request.form.get("target") or "").strip()
+def set_target_price(item_id):
+    """Alias for set_target (older templates used endpoint name set_target_price)."""
+    return set_target(item_id)
+    target = (request.form.get("target") or request.form.get("target_price") or request.form.get("target_price_value") or "").strip()
     try:
         target_val = float(target)
     except Exception:
