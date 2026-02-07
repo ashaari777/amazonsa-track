@@ -698,11 +698,6 @@ def index():
 
     cur.execute("SELECT * FROM items WHERE user_id=%s ORDER BY created_at DESC", (uid,))
     items = cur.fetchall()
-    # Backward-compatible target field: always provide target_price_value to templates
-for it in items:
-    if "target_price_value" not in it:
-        it["target_price_value"] = it.get("target_price")
-
 
     announcement = get_system_announcement()
 
@@ -714,6 +709,7 @@ for it in items:
     user_asins = []
     for it in items:
         user_asins.append(it["asin"])
+
         cur.execute(
             """
             SELECT * FROM price_history
@@ -724,7 +720,13 @@ for it in items:
             (it["id"],),
         )
         latest = cur.fetchone()
+
         it = dict(it)
+
+        # ✅ Make sure template always has target_price_value (avoid Jinja crash)
+        if "target_price_value" not in it:
+            it["target_price_value"] = it.get("target_price")
+
         it["latest_name"] = latest["item_name"] if latest else None
         it["latest_price_text"] = latest["price_text"] if latest else None
         it["coupon_text"] = latest["coupon_text"] if latest else None
@@ -741,11 +743,9 @@ for it in items:
         marketing_deals=marketing_deals,
         announcement=announcement,
         last_run=last_run,
-        is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
+        is_admin=(session.get("role") == "admin")
+        or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
     )
-
-
-@app.route("/add", methods=["POST"])
 @login_required
 def add():
     raw = (request.form.get("item") or "").strip()
