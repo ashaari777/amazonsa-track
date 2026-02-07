@@ -497,7 +497,11 @@
 
             <div class="actions-row">
               <form method="post" action="/set-target/{{ it.id }}" class="target-box">
-                <div class="target-label">Target price ({{ '—' if it.target_price_value is none else ('SAR ' ~ ('%.2f'|format(it.target_price_value|float))) }})</div>
+                {% set tp = it.get('target_price_value', it.get('target_price')) %}
+<div class="target-label">
+  Target price ({{ '—' if tp is none else ('SAR ' ~ ('%.2f'|format(tp|float))) }})
+</div>
+
                 <input name="target" class="target-input" placeholder="Target SAR" inputmode="decimal" />
                 <button class="btn-glow" type="submit" style="padding:12px 18px;">Set</button>
               </form>
