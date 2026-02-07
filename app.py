@@ -729,9 +729,6 @@ def index():
 
     marketing_deals = get_marketing_deals(user_asins, limit=5)
 
-    while len(marketing_deals) < 5:
-        marketing_deals.append(None)
-
     return render_template(
         "index.html",
         user={"email": user.get("email") or ""},
