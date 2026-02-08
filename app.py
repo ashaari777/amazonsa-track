@@ -85,6 +85,11 @@ def ensure_schema():
     except Exception:
         conn.rollback()
 
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT")
+    except Exception:
+        conn.rollback()
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS items (
@@ -140,6 +145,17 @@ def ensure_schema():
         CREATE TABLE IF NOT EXISTS system_settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS target_notifications (
+            id SERIAL PRIMARY KEY,
+            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            notified_at TEXT NOT NULL,
+            price_at_notification NUMERIC
         );
         """
     )
@@ -303,6 +319,136 @@ def max_percent_from_text(t):
         except Exception:
             pass
     return max(nums) if nums else None
+
+
+# ---------------- Telegram Notifications ----------------
+
+def send_telegram_alert(chat_id, item_data):
+    """Send urgent price alert via Telegram"""
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not bot_token or not chat_id:
+        return False
+    
+    item_name = item_data.get('item_name', 'Item')
+    current_price = item_data.get('price_text', 'N/A')
+    current_value = item_data.get('price_value', 0)
+    target_price = item_data.get('target_price', 0)
+    url = item_data.get('url', '')
+    
+    # Calculate savings
+    savings = target_price - current_value if target_price and current_value else 0
+    savings_percent = (savings / target_price * 100) if target_price and target_price > 0 else 0
+    
+    # Urgent notification message
+    message = f"""🚨 *PRICE DROP ALERT!* 🚨
+
+{item_name}
+_Just hit your target price!_
+
+💰 *NOW: {current_price}*
+🎯 Target: SAR {target_price:.2f}
+💵 *YOU SAVE: {savings:.2f} SAR ({savings_percent:.1f}%)*
+
+⏰ _Prices may change anytime!_
+🛒 Grab it NOW: {url}
+
+🦅 *PriceHawk Alert*
+"""
+    
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": False
+            },
+            timeout=10
+        )
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Telegram error: {e}")
+        return False
+
+
+def check_and_send_target_alert(item_id, new_price_data):
+    """Check if target price reached and send Telegram alert"""
+    conn = db_conn()
+    cur = conn.cursor()
+    
+    # Get item details with user's Telegram chat ID
+    cur.execute("""
+        SELECT i.*, u.telegram_chat_id, u.email
+        FROM items i
+        JOIN users u ON u.id = i.user_id
+        WHERE i.id = %s
+    """, (item_id,))
+    
+    item = cur.fetchone()
+    
+    if not item:
+        conn.close()
+        return
+    
+    # Check if target price is set and user has Telegram
+    if not item.get('target_price_value') or not item.get('telegram_chat_id'):
+        conn.close()
+        return
+    
+    target_price = float(item['target_price_value'])
+    current_price = new_price_data.get('price_value')
+    
+    if not current_price or current_price <= 0:
+        conn.close()
+        return
+    
+    # Check if price dropped below target
+    if current_price <= target_price:
+        # Check if we already notified recently (avoid spam)
+        cur.execute("""
+            SELECT notified_at FROM target_notifications
+            WHERE item_id = %s
+            ORDER BY notified_at DESC
+            LIMIT 1
+        """, (item_id,))
+        
+        last_notification = cur.fetchone()
+        
+        # Only notify if never notified before or more than 24 hours passed
+        should_notify = True
+        
+        if last_notification:
+            from datetime import datetime, timedelta
+            try:
+                last_time = datetime.strptime(last_notification['notified_at'], '%Y-%m-%d %H:%M:%S')
+                if (datetime.utcnow() - last_time) < timedelta(hours=24):
+                    should_notify = False
+            except:
+                pass
+        
+        if should_notify:
+            # Prepare data for Telegram
+            telegram_data = {
+                'item_name': new_price_data.get('item_name', item.get('asin', 'Item')),
+                'price_text': new_price_data.get('price_text', f'SAR {current_price:.2f}'),
+                'price_value': current_price,
+                'target_price': target_price,
+                'url': item['url']
+            }
+            
+            # Send Telegram alert
+            sent = send_telegram_alert(item['telegram_chat_id'], telegram_data)
+            
+            if sent:
+                # Record notification
+                cur.execute("""
+                    INSERT INTO target_notifications (item_id, notified_at, price_at_notification)
+                    VALUES (%s, %s, %s)
+                """, (item_id, now_utc_str(), current_price))
+                conn.commit()
+    
+    conn.close()
 
 
 # ---------------- Marketing Deals ----------------
@@ -586,6 +732,12 @@ def write_history(item_id, data):
         conn.commit()
 
     conn.close()
+    
+    # Check for target price alerts
+    try:
+        check_and_send_target_alert(item_id, data)
+    except Exception as e:
+        print(f"Alert check error: {e}")
 
 
 def run_global_scrape():
@@ -751,7 +903,7 @@ def index():
 
     return render_template(
         "index.html",
-        user={"email": user.get("email") or ""},
+        user={"email": user.get("email") or "", "telegram_chat_id": user.get("telegram_chat_id")},
         items=enriched,
         marketing_deals=marketing_deals,
         announcement=announcement,
@@ -1326,6 +1478,97 @@ def cron_update_all():
 
     threading.Thread(target=run_global_scrape, daemon=True).start()
     return "OK started", 200
+
+
+# ---------------- Telegram Bot Routes ----------------
+
+@app.route("/telegram-setup")
+@login_required
+def telegram_setup():
+    bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "PriceHawkSABot")
+    user_id = session.get("user_id")
+    
+    # Generate a unique link token
+    link_token = hashlib.sha256(f"{user_id}:{APP_SECRET}:{time.time()}".encode()).hexdigest()[:16]
+    set_setting(f"telegram_link_{user_id}", link_token)
+    
+    telegram_link = f"https://t.me/{bot_username}?start={link_token}"
+    
+    return render_template(
+        "telegram_setup.html",
+        bot_username=bot_username,
+        link_token=link_token,
+        telegram_link=telegram_link
+    )
+
+
+@app.route("/telegram-disconnect", methods=["POST"])
+@login_required
+def telegram_disconnect():
+    user_id = session.get("user_id")
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET telegram_chat_id = NULL WHERE id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+    flash("Telegram disconnected", "ok")
+    return redirect(url_for("index"))
+
+
+@app.route("/telegram-webhook", methods=["POST"])
+def telegram_webhook():
+    """Handle incoming Telegram updates"""
+    try:
+        update = request.get_json()
+        
+        if "message" in update:
+            message = update["message"]
+            chat_id = message["chat"]["id"]
+            text = message.get("text", "")
+            
+            # Handle /start command with link token
+            if text.startswith("/start "):
+                link_token = text.split(" ", 1)[1] if " " in text else ""
+                
+                # Find user with this link token
+                conn = db_conn()
+                cur = conn.cursor()
+                
+                # Check all users for matching token
+                cur.execute("SELECT id FROM users")
+                users = cur.fetchall()
+                
+                for user in users:
+                    stored_token = get_setting(f"telegram_link_{user['id']}")
+                    if stored_token == link_token:
+                        # Link this chat_id to user
+                        cur.execute(
+                            "UPDATE users SET telegram_chat_id = %s WHERE id = %s",
+                            (str(chat_id), user['id'])
+                        )
+                        conn.commit()
+                        
+                        # Send confirmation
+                        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+                        if bot_token:
+                            requests.post(
+                                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                                json={
+                                    "chat_id": chat_id,
+                                    "text": "🦅 *PriceHawk Connected!*\n\nYou'll now receive instant alerts when your tracked items hit target prices.\n\n_Go add items and set target prices on your dashboard_",
+                                    "parse_mode": "Markdown"
+                                }
+                            )
+                        
+                        conn.close()
+                        return "OK", 200
+                
+                conn.close()
+        
+        return "OK", 200
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return "OK", 200
 
 
 if __name__ == "__main__":
