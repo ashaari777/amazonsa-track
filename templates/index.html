@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Price Tracker</title>
+  <title>Zarss • Amazon.sa Price Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
@@ -145,6 +145,7 @@
         flex-direction: column;
         position: relative;
         overflow: hidden;
+        height: 470px;
     }
 
     .card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,0.2); }
@@ -228,9 +229,9 @@
     .chart-date{ display:none; }
 
     .actions-row{ display:flex; gap:10px; margin-top: 14px; align-items:center; }
-    .target-box{ flex:1; display:flex; gap:10px; align-items:center; border-radius:16px; padding: 8px 12px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); }
+    .target-box{ flex:1; display:flex; gap:10px; align-items:center; border-radius:16px; padding: 6px 10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); }
     .target-label{ color: rgba(255,255,255,0.55); font-weight:700; font-size:.9rem; white-space:nowrap; }
-    .target-input{ flex:1; min-width: 140px; border-radius:12px; padding:8px 10px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.20); color:#fff; outline:none; }
+    .target-input{ flex:1; min-width: 140px; border-radius:12px; padding:6px 10px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.20); color:#fff; outline:none; }
     .del-btn{ padding: 10px 16px; border-radius: 14px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); color: rgba(255,90,90,0.95); font-weight: 900; cursor:pointer; }
     .del-btn:hover{ background: rgba(255,90,90,0.10); border-color: rgba(255,90,90,0.22); }
 
@@ -258,6 +259,7 @@
         color: var(--text-muted);
         font-size: .85em;
         font-weight: 700;
+        display:none;
     }
     .marketing-list{
         display:flex;
@@ -504,8 +506,6 @@
               <div id="info-{{ it.asin }}" class="chart-info"></div>
             </div>
 
-            <div id="date-{{ it.asin }}" class="chart-date">&nbsp;</div>
-
             <div class="actions-row">
               <form method="post" action="/set-target/{{ it.id }}" class="target-box">
                 <div class="target-label">Target price ({{ '—' if it.target_price_value is none else ('SAR ' ~ ('%.2f'|format(it.target_price_value|float))) }})</div>
@@ -540,14 +540,12 @@
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
-    const dateDiv = document.getElementById('date-' + asin);
 
     const raw = (points || []).filter(p => p.price_value > 0);
     if (raw.length === 0) return;
 
     // Keepa style: extend to NOW
     const lastPoint = raw[raw.length - 1];
-    if (dateDiv) dateDiv.textContent = lastPoint.ts || '';
     const now = new Date();
     const lastDate = new Date((lastPoint.ts || '').replace(' ', 'T') + 'Z');
 
@@ -659,7 +657,6 @@
               title: (items) => {
                 if (!items?.length) return '';
                 const t = items[0].label || '';
-                if (dateDiv) dateDiv.textContent = t;
                 return '';
               }
             }
@@ -668,7 +665,7 @@
         scales: {
           x: {
             display: true,
-            grid: { color: 'rgba(255,255,255,0.06)' },
+            grid: { display: false },
             ticks: {
               autoSkip: false,
               maxRotation: 0,
