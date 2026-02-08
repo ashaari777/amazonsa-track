@@ -793,7 +793,10 @@ def add():
     except Exception as e:
         conn.rollback()
         conn.close()
-        flash("Failed to add item.", "error")
+        import traceback
+        error_detail = str(e)
+        traceback.print_exc()  # Log to console for debugging
+        flash(f"Failed to add item: {error_detail}", "error")
         return redirect(url_for("index"))
 
     cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
