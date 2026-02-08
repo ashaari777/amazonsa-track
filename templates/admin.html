@@ -69,6 +69,7 @@
       <div class="stat-card">
           <div style="font-size: 1.1rem; color: #4ade80; font-weight: bold;">{{ data.last_run.split(' ')[1] if ' ' in data.last_run else 'Pending' }}</div>
           <div>Last Global Update</div>
+          <div id="next-update-countdown" style="font-size: 0.85rem; color: #8b8b9e; margin-top: 5px;">Next in: --</div>
       </div>
     </div>
 
@@ -91,7 +92,7 @@
 	    </div>
 
 	    <div class="card">
-        <h3>⏱ Update Interval</h3>
+        <h3>⏱ Update Interval <span style="color: #4ade80; font-size: 0.9rem; font-weight: 600;">(Current: {{ data.update_interval_minutes or 30 }} min)</span></h3>
         <div style="color:#8b8b9e; font-size:.92rem; margin-bottom:10px;">
             Controls how often the app writes a new history point (de-dup window) and how often the global scraper is allowed to run.
         </div>
@@ -162,7 +163,7 @@
 
         <table>
           <thead>
-            <tr><th>Owner</th><th>ASIN</th><th>Product Name</th><th>Price</th><th>Action</th></tr>
+            <tr><th>Owner</th><th>ASIN</th><th>Product Name</th><th>Price</th><th>Last Update</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {% for it in data['items_list'] %}
@@ -171,9 +172,13 @@
               <td>{{ it.asin }}</td>
               <td style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.latest_name or 'Pending...' }}</td>
               <td>{{ it.latest_price_text or '--' }}</td>
+              <td style="font-size:0.85rem; color:#8b8b9e;">{{ it.latest_ts or 'Never' }}</td>
               <td>
-                <form method="post" action="{{ url_for('admin_delete_item_by_id', item_id=it.id) }}" onsubmit="return confirm('Remove item?')">
-                  <button class="btn" style="color:#ef4444">Remove</button>
+                <form method="post" action="{{ url_for('admin_update_item_by_id', item_id=it.id) }}" style="display:inline; margin-right:8px;">
+                  <button class="btn btn-outline" style="font-size:0.75rem; padding:5px 12px;">Update</button>
+                </form>
+                <form method="post" action="{{ url_for('admin_delete_item_by_id', item_id=it.id) }}" onsubmit="return confirm('Remove item?')" style="display:inline;">
+                  <button class="btn" style="color:#ef4444; font-size:0.75rem; padding:5px 12px;">Remove</button>
                 </form>
               </td>
             </tr>
@@ -183,5 +188,41 @@
     </div>
   {% endif %}
 </div>
+
+<script>
+// Countdown timer for next update
+(function() {
+    const lastRunStr = "{{ data.last_run }}";
+    const intervalMinutes = {{ data.update_interval_minutes or 30 }};
+    const countdownEl = document.getElementById('next-update-countdown');
+    
+    if (!countdownEl || !lastRunStr) return;
+    
+    // Parse last run time
+    const lastRun = new Date(lastRunStr.replace(' ', 'T') + 'Z');
+    
+    function updateCountdown() {
+        const now = new Date();
+        const nextUpdate = new Date(lastRun.getTime() + intervalMinutes * 60 * 1000);
+        const diff = nextUpdate - now;
+        
+        if (diff <= 0) {
+            countdownEl.textContent = 'Next in: Updating...';
+            countdownEl.style.color = '#4ade80';
+            return;
+        }
+        
+        const minutes = Math.floor(diff / 60000);
+        const seconds = Math.floor((diff % 60000) / 1000);
+        
+        countdownEl.textContent = `Next in: ${minutes}m ${seconds}s`;
+        countdownEl.style.color = '#8b8b9e';
+    }
+    
+    updateCountdown();
+    setInterval(updateCountdown, 1000);
+})();
+</script>
+
 </body>
 </html>
