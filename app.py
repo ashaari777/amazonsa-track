@@ -786,8 +786,8 @@ def add():
 
     try:
         cur.execute(
-            "INSERT INTO items(user_id, asin, url) VALUES(%s,%s,%s)",
-            (uid, asin, url),
+            "INSERT INTO items(user_id, asin, url, created_at) VALUES(%s,%s,%s,%s)",
+            (uid, asin, url, now_utc_str()),
         )
         conn.commit()
     except Exception as e:
