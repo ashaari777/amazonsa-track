@@ -757,16 +757,23 @@ def add():
     cur = conn.cursor()
     uid = session.get("user_id")
 
+    # ✅ Explicit duplicate check (prevents false 'already in your list' on other DB errors)
+    cur.execute("SELECT 1 FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
+    if cur.fetchone():
+        conn.close()
+        flash("This item is already in your list.", "error")
+        return redirect(url_for("index"))
+
     try:
         cur.execute(
             "INSERT INTO items(user_id, asin, url) VALUES(%s,%s,%s)",
             (uid, asin, url),
         )
         conn.commit()
-    except Exception:
+    except Exception as e:
         conn.rollback()
         conn.close()
-        flash("This item is already in your list.", "error")
+        flash("Failed to add item.", "error")
         return redirect(url_for("index"))
 
     cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
