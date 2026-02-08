@@ -99,6 +99,26 @@ def ensure_schema():
         """
     )
 
+    # ---- Migration safety: older DBs might have UNIQUE(asin) or UNIQUE(url) constraints
+    # which would prevent different users from adding the same ASIN.
+    try:
+        cur.execute(
+            """
+            SELECT conname, pg_get_constraintdef(oid) AS def
+            FROM pg_constraint
+            WHERE conrelid = 'items'::regclass AND contype = 'u';
+            """
+        )
+        for row in cur.fetchall() or []:
+            conname = row.get("conname")
+            cdef = (row.get("def") or "").lower()
+            # Drop unique constraints that are not the intended (user_id, asin)
+            if "unique" in cdef and "(user_id, asin)" not in cdef:
+                if "(asin)" in cdef or "(url)" in cdef or "(asin, url)" in cdef:
+                    cur.execute(f'ALTER TABLE items DROP CONSTRAINT IF EXISTS "{conname}"')
+    except Exception:
+        conn.rollback()
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS price_history (
