@@ -1101,6 +1101,29 @@ def admin_delete_item_by_id(item_id):
     return redirect(url_for("admin_portal", tab="items"))
 
 
+@app.route("/admin/item/<int:item_id>/update", methods=["POST"])
+@admin_required
+def admin_update_item_by_id(item_id):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM items WHERE id=%s", (item_id,))
+    item = cur.fetchone()
+    conn.close()
+
+    if not item:
+        flash("Item not found.", "error")
+        return redirect(url_for("admin_portal", tab="items"))
+
+    try:
+        data = run_async(scrape_one_amazon_sa, item["url"])
+        write_history(item["id"], data)
+        flash("Item updated successfully.", "ok")
+    except Exception as e:
+        flash(f"Update failed: {e}", "error")
+
+    return redirect(url_for("admin_portal", tab="items"))
+
+
 # ---------------- Auth routes ----------------
 
 @app.route("/register", methods=["GET", "POST"])
