@@ -177,6 +177,8 @@
         text-overflow:ellipsis;
         max-width:100%;
     }
+
+    .item-title:hover{ text-decoration: underline; }
     .meta-row{
         display:flex;
         justify-content:space-between;
@@ -672,9 +674,9 @@
           <div class="card">
             <div class="card-head">
               <div class="title-wrap">
-                <div class="item-title" title="{{ it.latest_name if it.latest_name else it.asin }}">
+                <a class="item-title" href="{{ it.url if it.url else ("https://www.amazon.sa/dp/" ~ it.asin ~ "?language=en") }}" target="_blank" rel="noopener" title="{{ it.latest_name if it.latest_name else it.asin }}">
                   {{ it.latest_name if it.latest_name else it.asin }}
-                </div>
+                </a>
 
                 <div class="meta-row">
                   <div class="pills">
@@ -682,9 +684,11 @@
                     <div class="pill pill-low"><strong id="l-{{ it.asin }}">L: --</strong></div>
                     <div class="pill pill-high"><strong id="h-{{ it.asin }}">H: --</strong></div>
 
-                    {% if it.coupon_text %}
-                      <span class="pill pill-coupon" id="coupon-pct-{{ it.asin }}">--</span>
-                      <button type="button" class="pill pill-more" onclick="toggleCoupon('{{ it.asin }}')">more</button>
+                    {% if it.coupon_text or it.discount_percent %}
+                      <span class="pill pill-coupon" id="coupon-pct-{{ it.asin }}" data-disc="{{ it.discount_percent if it.discount_percent is not none else '' }}">--</span>
+                      {% if it.coupon_text %}
+                        <button type="button" class="pill pill-more" onclick="toggleCoupon('{{ it.asin }}')">more</button>
+                      {% endif %}
                     {% endif %}
                   </div>
                 </div>
@@ -782,16 +786,18 @@ document.addEventListener('click', (e) => {
     const minV = baseVals.length ? Math.min(...baseVals) : null;
     const maxV = baseVals.length ? Math.max(...baseVals) : null;
 
-    // If there was no real variation, hide L/H (avoid: C=111 | L=111 | H=111)
-    const noChange = (minV === null || maxV === null) ? true : (Math.abs(maxV - minV) < 0.005);
+    // Compute min/max from the REAL history points (exclude the optional extension-to-now point)
+    const baseVals = (raw || []).map(p => Number(p.price_value)).filter(v => !isNaN(v) && v > 0);
+    const minV = baseVals.length ? Math.min(...baseVals) : null;
+    const maxV = baseVals.length ? Math.max(...baseVals) : null;
 
     const curEl = document.getElementById('cur-' + asin);
     const lEl = document.getElementById('l-' + asin);
     const hEl = document.getElementById('h-' + asin);
 
     if (curEl) curEl.textContent = fmtSAR(current);
-    if (lEl) lEl.textContent = noChange ? 'L: —' : `L: ${fmtSAR(minV).replace('SAR ', '')}`;
-    if (hEl) hEl.textContent = noChange ? 'H: —' : `H: ${fmtSAR(maxV).replace('SAR ', '')}`;
+    if (lEl) lEl.textContent = (minV === null ? 'L: --' : `L: ${fmtSAR(minV).replace('SAR ', '')}`);
+    if (hEl) hEl.textContent = (maxV === null ? 'H: --' : `H: ${fmtSAR(maxV).replace('SAR ', '')}`);
 
     // Tighten the visible y-range (Keepa-like zoom)
     let suggestedMin = undefined;
@@ -942,28 +948,32 @@ document.addEventListener('click', (e) => {
     if(!wrap || !list) return;
 
     const deals = (marketingDeals || []).slice(0, 5);
-    if(!deals.length){
-      list.innerHTML = `<div style="padding:14px; border-radius:14px; border:1px dashed rgba(255,255,255,0.18); color: rgba(255,255,255,0.70); font-weight:800; text-align:center;">No top deals yet</div>`;
-      wrap.style.display = "";
-      return;
+    const filled = deals.length ? deals.slice() : [];
+    while(filled.length < 5){
+      filled.push({asin:'', title:'More deals soon…', price_text:'SAR --', best_percent:null, url:''});
     }
 
-    list.innerHTML = deals.map(d => {
+    list.innerHTML = filled.map(d => {
       const pct = (d.best_percent !== null && d.best_percent !== undefined) ? `-${String(d.best_percent)}%` : "--";
-      const title = d.title || d.asin;
+      const title = d.title || d.asin || "Deal";
       const price = d.price_text || "SAR --";
+      const asin = d.asin || "";
+      const addBtn = asin
+        ? `<button class="deal-add-btn" onclick="quickAddAsin('${escapeHtml(asin)}')">ADD</button>`
+        : `<button class="deal-add-btn" onclick="return false;" style="opacity:.55; cursor:default;">ADD</button>`;
+
       return `
-        <div class="deal-banner" data-asin="${escapeHtml(d.asin)}">
+        <div class="deal-banner" data-asin="${escapeHtml(asin)}" ${asin ? `onclick="window.open('${escapeHtml(d.url || ('https://www.amazon.sa/dp/' + asin + '?language=en'))}','_blank')"` : ''} style="${asin ? 'cursor:pointer;' : ''}">
           <div class="deal-top">
             <div class="deal-title">${escapeHtml(title)}</div>
           </div>
 
           <div class="deal-body">
             <div class="deal-price">${escapeHtml(price)}</div>
-            <div class="deal-mid">
+            <div class="deal-mid" onclick="event.stopPropagation();">
               <div class="deal-divider"></div>
               <div class="deal-off">${escapeHtml(pct)}</div>
-              <button class="deal-add-btn" onclick="quickAddAsin('${escapeHtml(d.asin)}')">ADD</button>
+              ${addBtn}
             </div>
           </div>
         </div>
@@ -973,7 +983,6 @@ document.addEventListener('click', (e) => {
     wrap.style.display = "";
   }
 
-  
 function toggleCoupon(asin){
   const el = document.getElementById('coupon-full-' + asin);
   if(!el) return;
@@ -992,6 +1001,19 @@ function initCoupons(){
       .filter(n => n>=1 && n<=95);
     const uniq = Array.from(new Set(nums)).sort((a,b)=>a-b);
     if(!uniq.length){
+      // Fallback: use discount_percent if backend provided it
+      const disc = (pctEl.getAttribute('data-disc') || '').toString().trim();
+      if(disc){
+        const n = parseInt(disc,10);
+        if(!isNaN(n) && n>0){
+          pctEl.textContent = `-${n}%`;
+          // keep "more" only if we have full text
+          const moreBtn = pctEl.nextElementSibling;
+          if(moreBtn && moreBtn.classList.contains('pill-more')) moreBtn.style.display = (txt ? '' : 'none');
+          if(!txt) fullEl.style.display = 'none';
+          return;
+        }
+      }
       pctEl.style.display = 'none';
       const moreBtn = pctEl.nextElementSibling;
       if(moreBtn && moreBtn.classList.contains('pill-more')) moreBtn.style.display = 'none';
@@ -1041,3 +1063,4 @@ window.addEventListener('load', () => {
 
 </body>
 </html>
+
