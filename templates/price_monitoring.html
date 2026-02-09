@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Price monitoring • PriceHawk</title>
+  <title>PriceHawk • Price monitoring</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
     :root{
@@ -15,19 +15,21 @@
         --text-muted: rgba(255,255,255,0.65);
         --accent: #d53369;
         --gold: #daae51;
-        --ok: #2ee59d;
-        --bad: rgba(255,90,90,0.95);
+        --green: #2ee59d;
+        --red: rgba(255,90,90,0.95);
     }
     *{ box-sizing:border-box; }
     body{
-        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        font-family: 'Inter', sans-serif;
         margin:0;
         background: var(--bg);
         color: var(--text);
         display:flex;
         min-height:100vh;
     }
-    .sidebar {
+
+    /* Sidebar */
+    .sidebar{
         width: 250px;
         background: var(--sidebar);
         padding: 25px;
@@ -35,10 +37,12 @@
         flex-direction:column;
         gap:15px;
         position: fixed;
-        top:0; bottom:0; left:0;
+        top:0;
+        bottom:0;
+        left:0;
     }
     .user-email-top{ font-weight:700; color:#fff; margin-bottom: 8px; }
-    .nav-item {
+    .nav-item{
         padding: 12px 14px;
         border-radius: 12px;
         text-decoration:none;
@@ -60,25 +64,22 @@
     .nav-item.active{ background: rgba(218, 174, 81, 0.18); border:1px solid rgba(218, 174, 81, 0.35); }
     .spacer{ flex:1; }
 
-    .main { margin-left: 250px; flex: 1; padding: 30px 40px; width: 100%; }
+    /* Main */
+    .main{ margin-left: 250px; flex: 1; padding: 30px 40px; width:100%; }
+
     .header{
         display:flex;
         justify-content:space-between;
-        align-items:flex-end;
+        align-items:flex-start;
         gap: 14px;
-        margin-bottom: 18px;
+        margin-bottom: 22px;
     }
-    .header h1{
-        margin:0;
-        font-size: 1.7rem;
-        font-weight: 950;
-    }
-    .sub{
-        color: var(--text-muted);
-        font-weight: 700;
-        margin-top: 6px;
-    }
-    .btn-outline{
+    .header-left{ display:flex; flex-direction:column; gap:6px; }
+    h1{ font-size: 1.8rem; font-weight: 900; margin:0; }
+    .subtitle{ color: var(--text-muted); font-weight: 700; }
+
+    .top-actions{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+    .top-btn{
         border: 1px solid rgba(255,255,255,0.16);
         background: rgba(0,0,0,0.20);
         color: #fff;
@@ -88,83 +89,124 @@
         font-weight: 800;
         font-family: inherit;
         text-decoration:none;
-        display:inline-block;
-        white-space:nowrap;
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
     }
-    .btn-outline:hover{ background: rgba(255,255,255,0.05); }
 
     .grid{
         display:grid;
-        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
         gap: 18px;
     }
+
     .card{
         background: var(--card-bg);
         border: 1px solid var(--border);
         border-radius: 18px;
-        padding: 16px;
+        padding: 18px;
         backdrop-filter: blur(10px);
+        display:flex;
+        flex-direction:column;
+        gap: 12px;
     }
+
     .title{
-        font-weight: 950;
-        margin: 0 0 10px 0;
+        font-weight: 900;
+        font-size: 1rem;
         line-height: 1.25;
-        font-size: 1.0rem;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        margin:0;
     }
+
     .row{
         display:flex;
+        align-items:center;
         justify-content:space-between;
         gap: 10px;
-        align-items:center;
-        margin-top: 8px;
-        flex-wrap:wrap;
+        flex-wrap: wrap;
     }
+
+    .price{
+        font-weight: 1000;
+        font-size: 1.25rem;
+        letter-spacing: .2px;
+    }
+
     .pill{
-        font-size: .82rem;
+        font-size: .8rem;
         font-weight: 900;
-        padding: 6px 10px;
+        padding: 7px 10px;
         border-radius: 999px;
         border: 1px solid rgba(255,255,255,0.16);
         background: rgba(0,0,0,0.22);
         color:#fff;
-        white-space:nowrap;
+        display:inline-flex;
+        align-items:center;
+        gap: 8px;
+        white-space: nowrap;
     }
-    .pill-ok{
+    .pill-watch{
+        color: var(--green);
         border-color: rgba(46,229,157,0.35);
         background: rgba(46,229,157,0.10);
-        color: rgba(46,229,157,0.98);
     }
-    .pill-warn{
-        border-color: rgba(218,174,81,0.35);
-        background: rgba(218,174,81,0.10);
-        color: rgba(255,255,255,0.92);
-    }
-    .pill-target{
-        border-color: rgba(255,255,255,0.14);
-        background: rgba(0,0,0,0.18);
-        color: rgba(255,255,255,0.85);
-    }
-    .small{
-        color: rgba(255,255,255,0.70);
-        font-weight: 700;
-        font-size: .88rem;
-        margin-top: 8px;
-        line-height: 1.35;
+    .pill-win{
+        color: rgba(255, 220, 170, 0.98);
+        border-color: rgba(218,174,81,0.45);
+        background: rgba(218,174,81,0.12);
     }
 
-    @media (max-width: 900px) {
+    .meta{
+        color: rgba(255,255,255,0.72);
+        font-weight: 700;
+        font-size: .9rem;
+        line-height: 1.35;
+    }
+    .meta strong{ color: rgba(255,255,255,0.92); }
+
+    .btn-glow{
+        padding: 10px 14px;
+        border-radius: 14px;
+        border: none;
+        cursor: pointer;
+        font-weight: 900;
+        font-size: .9rem;
+        color: #fff;
+        background: linear-gradient(135deg, #d53369, #daae51);
+        box-shadow: 0 10px 30px rgba(213,51,105,0.25);
+        text-decoration:none;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        white-space: nowrap;
+    }
+
+    .empty{
+        text-align:center;
+        padding: 45px 16px;
+        color: var(--text-muted);
+        background: rgba(0,0,0,0.18);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 18px;
+    }
+
+    /* Mobile */
+    @media (max-width: 900px){
         .sidebar{ display:none; }
-        .main{ margin-left:0; padding: 20px; }
+        .main{ margin-left: 0; padding: 20px; }
+        .header{ flex-direction:column; align-items:stretch; }
+        .top-actions{ justify-content:flex-start; }
     }
   </style>
 </head>
 <body>
+
   <div class="sidebar">
     <div class="user-email-top">{{ user["email"] }}</div>
-    <a href="{{ url_for('index') }}" class="nav-item"><span>Dashboard</span></a>
+    <a class="nav-item" href="{{ url_for('index') }}"><span>Dashboard</span></a>
     <div class="nav-item active"><span>Price monitoring</span></div>
     {% if is_admin %}
       <a href="{{ url_for('admin_portal') }}" class="nav-item"><span>Admin</span></a>
@@ -177,47 +219,57 @@
 
   <div class="main">
     <div class="header">
-      <div>
-        <h1>🎯 Price monitoring</h1>
-        <div class="sub">Only items with a target price are shown here</div>
+      <div class="header-left">
+        <h1>Price monitoring</h1>
+        <div class="subtitle">Your target-price watches, in one place.</div>
       </div>
-      <a class="btn-outline" href="{{ url_for('index') }}">← Back</a>
+      <div class="top-actions">
+        <a class="top-btn" href="{{ url_for('telegram_setup') }}">Telegram setup</a>
+        <a class="top-btn" href="{{ url_for('index') }}">← Back</a>
+      </div>
     </div>
 
-    {% if not rows %}
-      <div class="card">
-        <div style="font-weight: 900; font-size: 1.05rem; margin-bottom: 6px;">No target prices yet</div>
-        <div class="small">Set a target price on any item, then come back here to see its status.</div>
+    {% if not items %}
+      <div class="empty">
+        <h2 style="margin:0 0 8px 0; font-weight:900; color: rgba(255,255,255,0.92);">No monitored items yet</h2>
+        <div style="margin:0;">Set a target price on any item, then come back here.</div>
       </div>
     {% else %}
       <div class="grid">
-        {% for r in rows %}
+        {% for it in items %}
           <div class="card">
-            <div class="title" title="{{ r.title }}">{{ r.title }}</div>
+            <div class="row" style="gap: 12px;">
+              <div style="min-width:0; flex:1;">
+                <div class="title" title="{{ it.name }}">{{ it.name }}</div>
+                <div class="meta" style="margin-top:6px;">
+                  Current price: <strong>{{ it.current_price_text }}</strong>
+                </div>
+              </div>
+
+              {% if it.reached_at %}
+                <div class="pill pill-win">Congrats 🎯</div>
+              {% else %}
+                <div class="pill pill-watch">Still watching 🦅</div>
+              {% endif %}
+            </div>
 
             <div class="row">
-              <span class="pill">Current: {{ r.current_price_text }}</span>
-              {% if r.target is not none %}
-                <span class="pill pill-target">Target: {{ '%.2f'|format(r.target|float) }}</span>
-              {% endif %}
-            </div>
+              <div class="meta">
+                Target: <strong>{% if it.target_price_value is not none %}SAR {{ '%.2f'|format(it.target_price_value) }}{% else %}—{% endif %}</strong>
+                {% if it.reached_at %}
+                  <div style="margin-top:6px;">
+                    Reached at: <strong>{{ it.reached_at }}</strong> <span style="opacity:.75;">UTC</span>
+                  </div>
+                {% endif %}
+              </div>
 
-            <div class="row" style="margin-top: 12px;">
-              {% if r.reached_ts %}
-                <span class="pill pill-ok">Congrats 🎯</span>
-                <span class="pill pill-ok">
-                  {{ r.reached_ts.strftime('%Y-%m-%d %H:%M') if r.reached_ts.strftime else r.reached_ts }}
-                </span>
-              {% else %}
-                <span class="pill pill-warn">Still watching 🦅</span>
-              {% endif %}
+              <a class="btn-glow" href="{{ it.url }}" target="_blank" rel="noopener">Open product</a>
             </div>
-
-            <div class="small">ASIN: {{ r.asin }}</div>
           </div>
         {% endfor %}
       </div>
     {% endif %}
   </div>
+
 </body>
 </html>
