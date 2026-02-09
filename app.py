@@ -1664,25 +1664,33 @@ def price_monitoring():
         title = (latest.get("item_name") if latest else None) or asin
         current_price_text = (latest.get("price_text") if latest else None) or "--"
         current_price_value = (latest.get("price_value") if latest else None)
+        latest_ts = (latest.get("ts") if latest else None)
 
-        reached_ts = None
-        if target is not None:
-            # First time the price reached (<= target)
-            cur.execute(
-                """
-                SELECT ts
-                FROM price_history
-                WHERE item_id=%s
-                  AND price_value IS NOT NULL
-                  AND price_value > 0
-                  AND price_value <= %s
-                ORDER BY ts ASC
-                LIMIT 1
-                """,
-                (item_id, float(target)),
-            )
-            hit = cur.fetchone()
-            reached_ts = hit.get("ts") if hit else None
+        status = "watching"
+        reached_at = None
+
+        # "Congrats" ONLY if the CURRENT price is <= target (not because it hit it in the past)
+        try:
+            if target is not None and current_price_value is not None and float(current_price_value) > 0:
+                if float(current_price_value) <= float(target):
+                    status = "congrats"
+
+                    # Prefer the recorded notification time (when the target was actually hit and alerted)
+                    cur.execute(
+                        """
+                        SELECT notified_at
+                        FROM target_notifications
+                        WHERE item_id=%s
+                        ORDER BY notified_at DESC
+                        LIMIT 1
+                        """,
+                        (item_id,),
+                    )
+                    nrow = cur.fetchone()
+                    reached_at = (nrow.get("notified_at") if nrow else None) or latest_ts
+        except Exception:
+            status = "watching"
+            reached_at = None
 
         rows.append(
             {
@@ -1691,7 +1699,8 @@ def price_monitoring():
                 "target": target,
                 "current_price_text": current_price_text,
                 "current_price_value": current_price_value,
-                "reached_ts": reached_ts,
+                "status": status,
+                "reached_at": reached_at,
             }
         )
 
@@ -1701,8 +1710,10 @@ def price_monitoring():
         "price_monitoring.html",
         user={"email": user.get("email") or ""},
         rows=rows,
-        is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
+        is_admin=(session.get("role") == "admin")
+        or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
     )
+
 
 
 
