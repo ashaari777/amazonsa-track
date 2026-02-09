@@ -25,39 +25,15 @@
         justify-content:center;
         padding:20px;
     }
-
     .container {
-        width: 100%;
         max-width: 600px;
+        width: 100%;
         background: var(--card-bg);
         border: 1px solid var(--border);
         border-radius: 20px;
         padding: 40px;
         backdrop-filter: blur(10px);
     }
-
-    .top{
-        display:flex;
-        justify-content:space-between;
-        align-items:center;
-        gap: 12px;
-        margin-bottom: 18px;
-        color: rgba(255,255,255,0.7);
-        font-weight: 700;
-        font-size: .92rem;
-    }
-    .back{
-        color: rgba(255,255,255,0.85);
-        text-decoration:none;
-        border: 1px solid rgba(255,255,255,0.16);
-        background: rgba(0,0,0,0.18);
-        padding: 8px 12px;
-        border-radius: 12px;
-        font-weight: 800;
-        white-space: nowrap;
-    }
-    .back:hover{ background: rgba(255,255,255,0.05); }
-
     h1 {
         font-size: 2rem;
         font-weight: 900;
@@ -66,19 +42,16 @@
         align-items: center;
         gap: 12px;
     }
-
     .subtitle {
         color: rgba(255,255,255,0.65);
         font-size: 1rem;
         margin-bottom: 30px;
     }
-
     .steps {
         list-style: none;
         padding: 0;
         margin: 30px 0;
     }
-
     .steps li {
         background: rgba(0,0,0,0.25);
         padding: 20px;
@@ -89,7 +62,6 @@
         gap: 15px;
         align-items: flex-start;
     }
-
     .step-number {
         background: var(--accent);
         color: white;
@@ -102,22 +74,16 @@
         font-weight: 900;
         flex-shrink: 0;
     }
-
-    .step-content {
-        flex: 1;
-    }
-
+    .step-content { flex: 1; }
     .step-title {
         font-weight: 800;
         font-size: 1.05rem;
         margin-bottom: 8px;
     }
-
     .step-text {
         color: rgba(255,255,255,0.75);
         line-height: 1.5;
     }
-
     code {
         background: rgba(0,0,0,0.4);
         padding: 4px 10px;
@@ -128,7 +94,6 @@
         display: inline-block;
         margin: 5px 0;
     }
-
     .btn-primary {
         background: linear-gradient(135deg, #d53369, #daae51);
         color: white;
@@ -144,11 +109,7 @@
         transition: 0.2s;
         text-align: center;
     }
-
-    .btn-primary:hover {
-        transform: translateY(-2px);
-    }
-
+    .btn-primary:hover { transform: translateY(-2px); }
     .btn-secondary {
         background: transparent;
         border: 1px solid rgba(255,255,255,0.2);
@@ -162,12 +123,10 @@
         transition: 0.2s;
         margin-left: 10px;
     }
-
     .btn-secondary:hover {
         background: rgba(255,255,255,0.05);
         border-color: rgba(255,255,255,0.3);
     }
-
     .link-box {
         background: rgba(0,0,0,0.3);
         padding: 15px;
@@ -175,7 +134,6 @@
         border: 1px solid rgba(255,255,255,0.15);
         margin: 20px 0;
     }
-
     .buttons {
         margin-top: 30px;
         display: flex;
@@ -183,36 +141,21 @@
         flex-wrap: wrap;
         gap: 10px;
     }
-
-    .hawk-icon {
-        font-size: 2.5rem;
-    }
+    .hawk-icon { font-size: 2.5rem; }
   </style>
 </head>
 <body>
 
 <div class="container">
-    <div class="top">
-        <div>{{ user.email if user and user.email else "" }}</div>
-        <a class="back" href="{{ url_for('index') }}">← Back</a>
-    </div>
-
-    <h1>
-        <span class="hawk-icon">🦅</span>
-        Connect PriceHawk
-    </h1>
-    <div class="subtitle">
-        Get instant Telegram alerts when your tracked items hit target prices
-    </div>
+    <h1><span class="hawk-icon">🦅</span>Connect PriceHawk</h1>
+    <div class="subtitle">Get instant Telegram alerts when your tracked items hit target prices</div>
 
     <ol class="steps">
         <li>
             <div class="step-number">1</div>
             <div class="step-content">
                 <div class="step-title">Open Telegram</div>
-                <div class="step-text">
-                    Search for <strong>@{{ bot_username }}</strong> in Telegram
-                </div>
+                <div class="step-text">Search for <strong>@{{ bot_username }}</strong> in Telegram</div>
             </div>
         </li>
 
@@ -231,31 +174,22 @@
             <div class="step-number">3</div>
             <div class="step-content">
                 <div class="step-title">You're Done!</div>
-                <div class="step-text">
-                    You'll receive a confirmation message. Return to your dashboard and start tracking prices.
-                </div>
+                <div class="step-text">You'll receive a confirmation message. Return to your dashboard and start tracking prices.</div>
             </div>
         </li>
     </ol>
 
     <div class="link-box">
-        <div style="font-weight: 700; margin-bottom: 10px; color: rgba(255,255,255,0.85);">
-            Quick Link:
-        </div>
+        <div style="font-weight: 700; margin-bottom: 10px; color: rgba(255,255,255,0.85);">Quick Link:</div>
         <a href="{{ telegram_link }}" target="_blank" style="color: #2ee59d; word-break: break-all; text-decoration: none;">
             {{ telegram_link }}
         </a>
     </div>
 
     <div class="buttons">
-        <a href="{{ telegram_link }}" target="_blank" class="btn-primary">
-            📱 Open in Telegram
-        </a>
-        <a href="{{ url_for('index') }}" class="btn-secondary">
-            ← Back to Dashboard
-        </a>
+        <a href="{{ telegram_link }}" target="_blank" class="btn-primary">📱 Open in Telegram</a>
+        <a href="{{ url_for('index') }}" class="btn-secondary">← Back to Dashboard</a>
     </div>
-
 </div>
 
 </body>
