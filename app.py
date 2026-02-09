@@ -901,18 +901,122 @@ def index():
 
     marketing_deals = get_marketing_deals(user_asins, limit=5)
 
-    telegram_link = build_telegram_deeplink(uid) if not user.get("telegram_chat_id") else None
-
     return render_template(
         "index.html",
         user={"email": user.get("email") or "", "telegram_chat_id": user.get("telegram_chat_id")},
         items=enriched,
         marketing_deals=marketing_deals,
-        telegram_link=telegram_link,
         announcement=announcement,
         last_run=last_run,
         is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
     )
+
+
+@app.route("/price-monitoring")
+@login_required
+def price_monitoring():
+    uid = session.get("user_id")
+
+    conn = db_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+    user = cur.fetchone()
+    if not user:
+        conn.close()
+        session.clear()
+        return redirect(url_for("login"))
+
+    if not user.get("is_approved"):
+        conn.close()
+        return redirect(url_for("waitlist_page"))
+
+    # This page is meant for subscribed users (Telegram connected)
+    if not user.get("telegram_chat_id"):
+        conn.close()
+        flash("Connect Telegram first to enable price monitoring.", "error")
+        return redirect(url_for("telegram_setup"))
+
+    cur.execute(
+        """
+        SELECT
+            i.id,
+            i.asin,
+            i.url,
+            i.created_at,
+            i.target_price_value,
+            ph.item_name,
+            ph.price_text,
+            ph.price_value,
+            ph.ts AS last_price_ts,
+            tn.reached_at
+        FROM items i
+        LEFT JOIN LATERAL (
+            SELECT item_name, price_text, price_value, ts
+            FROM price_history
+            WHERE item_id = i.id
+            ORDER BY ts DESC
+            LIMIT 1
+        ) ph ON true
+        LEFT JOIN (
+            SELECT item_id, MIN(notified_at) AS reached_at
+            FROM target_notifications
+            GROUP BY item_id
+        ) tn ON tn.item_id = i.id
+        WHERE i.user_id = %s
+          AND i.target_price_value IS NOT NULL
+        ORDER BY i.created_at DESC
+        """,
+        (uid,),
+    )
+
+    rows = cur.fetchall()
+    conn.close()
+
+    items = []
+    for r in rows or []:
+        name = (r.get("item_name") or "").strip() or r.get("asin") or "Item"
+
+        price_text = (r.get("price_text") or "").strip()
+        if not price_text:
+            pv = r.get("price_value")
+            try:
+                price_text = f"SAR {float(pv):.2f}" if pv is not None else "SAR --"
+            except Exception:
+                price_text = "SAR --"
+
+        reached_at = r.get("reached_at")
+        status = "Still watching 🦅"
+        if reached_at:
+            status = "Congrats 🎯"
+
+        try:
+            target_val = float(r.get("target_price_value")) if r.get("target_price_value") is not None else None
+        except Exception:
+            target_val = None
+
+        items.append(
+            {
+                "id": r.get("id"),
+                "asin": r.get("asin"),
+                "url": r.get("url"),
+                "name": name,
+                "current_price_text": price_text,
+                "target_price_value": target_val,
+                "reached_at": reached_at,
+                "status": status,
+            }
+        )
+
+    is_admin = (session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower())
+
+    return render_template(
+        "price_monitoring.html",
+        user={"email": user.get("email") or "", "telegram_chat_id": user.get("telegram_chat_id")},
+        items=items,
+        is_admin=is_admin,
+    )
+
 
 
 @app.route("/add", methods=["POST"])
@@ -1485,63 +1589,25 @@ def cron_update_all():
 
 # ---------------- Telegram Bot Routes ----------------
 
-
-# ---------------- Telegram Bot Helpers ----------------
-
-def get_or_create_telegram_link_token(user_id: int) -> str:
-    """Return a stable per-user link token used with /start <token>.
-
-    We persist it in system_settings so the user's Telegram link stays the same
-    until you decide to reset it.
-    """
-    key = f"telegram_link_{user_id}"
-    token = get_setting(key, None)
-    if token:
-        return token
-
-    # Create a new token (short, URL-safe) and persist it
-    raw = f"{user_id}:{APP_SECRET}:{time.time()}:{random.random()}"
-    token = hashlib.sha256(raw.encode()).hexdigest()[:16]
-    set_setting(key, token)
-    return token
-
-
-def build_telegram_deeplink(user_id: int) -> str:
-    bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "PriceHawkSABot")
-    link_token = get_or_create_telegram_link_token(user_id)
-    return f"https://t.me/{bot_username}?start={link_token}"
-
-
-
-
-@app.route("/telegram-setup", methods=["GET"])
+@app.route("/telegram-setup")
 @login_required
 def telegram_setup():
-    uid = session.get("user_id")
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
-    user = cur.fetchone()
-    conn.close()
-    if not user:
-        session.clear()
-        return redirect(url_for("login"))
-
-    # If already connected, no need to setup again
-    if user.get("telegram_chat_id"):
-        return redirect(url_for("index"))
-
     bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "PriceHawkSABot")
-    link_token = get_or_create_telegram_link_token(uid)
-    telegram_link = build_telegram_deeplink(uid)
-
+    user_id = session.get("user_id")
+    
+    # Generate a unique link token
+    link_token = hashlib.sha256(f"{user_id}:{APP_SECRET}:{time.time()}".encode()).hexdigest()[:16]
+    set_setting(f"telegram_link_{user_id}", link_token)
+    
+    telegram_link = f"https://t.me/{bot_username}?start={link_token}"
+    
     return render_template(
         "telegram_setup.html",
-        user={"email": user.get("email") or ""},
         bot_username=bot_username,
         link_token=link_token,
-        telegram_link=telegram_link,
+        telegram_link=telegram_link
     )
+
 
 @app.route("/telegram-disconnect", methods=["POST"])
 @login_required
@@ -1610,100 +1676,6 @@ def telegram_webhook():
     except Exception as e:
         print(f"Webhook error: {e}")
         return "OK", 200
-
-
-
-@app.route("/price-monitoring", methods=["GET"])
-@login_required
-def price_monitoring():
-    uid = session.get("user_id")
-    conn = db_conn()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
-    user = cur.fetchone()
-    if not user:
-        conn.close()
-        session.clear()
-        return redirect(url_for("login"))
-
-    if not user.get("is_approved"):
-        conn.close()
-        return redirect(url_for("waitlist_page"))
-
-    # Only show items that have a target price set
-    cur.execute(
-        """
-        SELECT * FROM items
-        WHERE user_id=%s AND target_price_value IS NOT NULL
-        ORDER BY created_at DESC
-        """,
-        (uid,),
-    )
-    items = cur.fetchall()
-
-    rows = []
-    for it in items:
-        item_id = it["id"]
-        asin = it["asin"]
-        target = it.get("target_price_value")
-
-        # Latest record (for title + current price)
-        cur.execute(
-            """
-            SELECT item_name, price_value, price_text, ts
-            FROM price_history
-            WHERE item_id=%s
-            ORDER BY ts DESC
-            LIMIT 1
-            """,
-            (item_id,),
-        )
-        latest = cur.fetchone()
-
-        title = (latest.get("item_name") if latest else None) or asin
-        current_price_text = (latest.get("price_text") if latest else None) or "--"
-        current_price_value = (latest.get("price_value") if latest else None)
-
-        reached_ts = None
-        if target is not None:
-            # First time the price reached (<= target)
-            cur.execute(
-                """
-                SELECT ts
-                FROM price_history
-                WHERE item_id=%s
-                  AND price_value IS NOT NULL
-                  AND price_value > 0
-                  AND price_value <= %s
-                ORDER BY ts ASC
-                LIMIT 1
-                """,
-                (item_id, float(target)),
-            )
-            hit = cur.fetchone()
-            reached_ts = hit.get("ts") if hit else None
-
-        rows.append(
-            {
-                "asin": asin,
-                "title": title,
-                "target": target,
-                "current_price_text": current_price_text,
-                "current_price_value": current_price_value,
-                "reached_ts": reached_ts,
-            }
-        )
-
-    conn.close()
-
-    return render_template(
-        "price_monitoring.html",
-        user={"email": user.get("email") or ""},
-        rows=rows,
-        is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
-    )
-
 
 
 if __name__ == "__main__":
