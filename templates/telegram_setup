@@ -1,0 +1,234 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Connect PriceHawk • Telegram</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root{
+        --bg: #0f0c29;
+        --card-bg: rgba(30, 30, 50, 0.55);
+        --border: rgba(255,255,255,0.10);
+        --text: rgba(255,255,255,0.95);
+        --accent: #d53369;
+    }
+    * { box-sizing:border-box; }
+    body {
+        font-family: 'Inter', sans-serif;
+        margin:0;
+        background: var(--bg);
+        color: var(--text);
+        min-height:100vh;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:20px;
+    }
+
+    .container {
+        max-width: 600px;
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 40px;
+        backdrop-filter: blur(10px);
+    }
+
+    h1 {
+        font-size: 2rem;
+        font-weight: 900;
+        margin: 0 0 10px 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .subtitle {
+        color: rgba(255,255,255,0.65);
+        font-size: 1rem;
+        margin-bottom: 30px;
+    }
+
+    .steps {
+        list-style: none;
+        padding: 0;
+        margin: 30px 0;
+    }
+
+    .steps li {
+        background: rgba(0,0,0,0.25);
+        padding: 20px;
+        border-radius: 14px;
+        margin-bottom: 15px;
+        border-left: 4px solid var(--accent);
+        display: flex;
+        gap: 15px;
+        align-items: flex-start;
+    }
+
+    .step-number {
+        background: var(--accent);
+        color: white;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 900;
+        flex-shrink: 0;
+    }
+
+    .step-content {
+        flex: 1;
+    }
+
+    .step-title {
+        font-weight: 800;
+        font-size: 1.05rem;
+        margin-bottom: 8px;
+    }
+
+    .step-text {
+        color: rgba(255,255,255,0.75);
+        line-height: 1.5;
+    }
+
+    code {
+        background: rgba(0,0,0,0.4);
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-family: 'Monaco', 'Menlo', monospace;
+        font-size: 0.95rem;
+        color: #2ee59d;
+        display: inline-block;
+        margin: 5px 0;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #d53369, #daae51);
+        color: white;
+        border: none;
+        padding: 16px 32px;
+        border-radius: 14px;
+        font-weight: 900;
+        font-size: 1.1rem;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        box-shadow: 0 10px 30px rgba(213,51,105,0.35);
+        transition: 0.2s;
+        text-align: center;
+    }
+
+    .btn-primary:hover {
+        transform: translateY(-2px);
+    }
+
+    .btn-secondary {
+        background: transparent;
+        border: 1px solid rgba(255,255,255,0.2);
+        color: rgba(255,255,255,0.75);
+        padding: 12px 24px;
+        border-radius: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        transition: 0.2s;
+        margin-left: 10px;
+    }
+
+    .btn-secondary:hover {
+        background: rgba(255,255,255,0.05);
+        border-color: rgba(255,255,255,0.3);
+    }
+
+    .link-box {
+        background: rgba(0,0,0,0.3);
+        padding: 15px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.15);
+        margin: 20px 0;
+    }
+
+    .buttons {
+        margin-top: 30px;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .hawk-icon {
+        font-size: 2.5rem;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>
+        <span class="hawk-icon">🦅</span>
+        Connect PriceHawk
+    </h1>
+    <div class="subtitle">
+        Get instant Telegram alerts when your tracked items hit target prices
+    </div>
+
+    <ol class="steps">
+        <li>
+            <div class="step-number">1</div>
+            <div class="step-content">
+                <div class="step-title">Open Telegram</div>
+                <div class="step-text">
+                    Search for <strong>@{{ bot_username }}</strong> in Telegram
+                </div>
+            </div>
+        </li>
+
+        <li>
+            <div class="step-number">2</div>
+            <div class="step-content">
+                <div class="step-title">Start the Bot</div>
+                <div class="step-text">
+                    Send this command to the bot:
+                    <code>/start {{ link_token }}</code>
+                </div>
+            </div>
+        </li>
+
+        <li>
+            <div class="step-number">3</div>
+            <div class="step-content">
+                <div class="step-title">You're Done!</div>
+                <div class="step-text">
+                    You'll receive a confirmation message. Return to your dashboard and start tracking prices.
+                </div>
+            </div>
+        </li>
+    </ol>
+
+    <div class="link-box">
+        <div style="font-weight: 700; margin-bottom: 10px; color: rgba(255,255,255,0.85);">
+            Quick Link:
+        </div>
+        <a href="{{ telegram_link }}" target="_blank" style="color: #2ee59d; word-break: break-all; text-decoration: none;">
+            {{ telegram_link }}
+        </a>
+    </div>
+
+    <div class="buttons">
+        <a href="{{ telegram_link }}" target="_blank" class="btn-primary">
+            📱 Open in Telegram
+        </a>
+        <a href="{{ url_for('index') }}" class="btn-secondary">
+            ← Back to Dashboard
+        </a>
+    </div>
+
+</div>
+
+</body>
+</html>
