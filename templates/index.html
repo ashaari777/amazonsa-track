@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Price Tracker</title>
+  <title>Zarss • Amazon.sa Price Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
@@ -600,7 +600,7 @@
                     Get instant Telegram notifications when prices drop to your target
                 </div>
             </div>
-            <button type="button" class="btn-glow" style="white-space: nowrap;" onclick="openSubscribeModal()">Subscribe</button>
+            <a href="{{ url_for('telegram_setup') }}" class="btn-glow" style="white-space: nowrap;">Subscribe</a>
         </div>
     </div>
     {% else %}
@@ -621,20 +621,28 @@
             </form>
         </div>
     </div>
+    
+    {# Price monitoring shortcut (only after Telegram is connected and at least one target is set) #}
+    {% set target_items = items|selectattr('target_price_value','ne',None)|list %}
+    {% if user.get('telegram_chat_id') and (target_items|length > 0) %}
+    <div class="add-panel" style="background: linear-gradient(135deg, rgba(218, 174, 81, 0.14), rgba(218, 174, 81, 0.05)); border-color: rgba(218, 174, 81, 0.28);">
+        <div style="display:flex; align-items:center; gap:15px; width:100%;">
+            <div style="flex:1;">
+                <div style="font-weight: 900; font-size: 1.05rem; margin-bottom: 5px; color: rgba(255,255,255,0.92);">
+                    🎯 Price monitoring
+                </div>
+                <div style="color: rgba(255,255,255,0.75); font-size: 0.9rem;">
+                    Track the status of your target prices in one place
+                </div>
+            </div>
+            <a href="{{ url_for('price_monitoring') }}" class="btn-glow" style="white-space: nowrap;">
+                View
+            </a>
+        </div>
+    </div>
     {% endif %}
 
-<!-- Subscribe Modal -->
-<div id="subscribeOverlay" class="ph-modal-overlay" style="display:none;">
-  <div class="ph-modal">
-    <div class="ph-modal-title">Enable PriceHawk Alerts</div>
-    <div class="ph-modal-text">We’ll notify you on Telegram the moment an item reaches your target price.</div>
-    <div class="ph-modal-actions">
-      <button type="button" class="ph-btn ph-btn-secondary" onclick="closeSubscribeModal()">Later</button>
-      <button type="button" class="ph-btn ph-btn-primary" onclick="confirmSubscribe()">Sure</button>
-    </div>
-  </div>
-</div>
-
+{% endif %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -722,34 +730,12 @@
   Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
 
 
-const telegramDeeplink = {{ telegram_link|tojson }};
 
-function openSubscribeModal(){
-  const ov = document.getElementById('subscribeOverlay');
-  if(!ov) return;
-  ov.style.display = 'flex';
-}
-
-function closeSubscribeModal(){
-  const ov = document.getElementById('subscribeOverlay');
-  if(!ov) return;
-  ov.style.display = 'none';
-}
-
-function confirmSubscribe(){
-  closeSubscribeModal();
-  if(telegramDeeplink){
-    window.open(telegramDeeplink, '_blank', 'noopener,noreferrer');
-  } else {
-    alert('Telegram is not configured yet.');
-  }
 }
 
 // Close modal when clicking outside
 document.addEventListener('click', (e) => {
-  const ov = document.getElementById('subscribeOverlay');
   if(!ov || ov.style.display === 'none') return;
-  if(e.target === ov) closeSubscribeModal();
 });
 
   async function loadHistory(asin) {
