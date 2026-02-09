@@ -660,7 +660,7 @@
     {% else %}
       <div class="grid">
 
-        <div class="card" id="marketing-wrap" style="display:none;">
+        <div class="card" id="marketing-wrap">
           <div class="marketing-head">
             <h2>Top deals right now</h2>
             <div class="marketing-sub">Tap “add” to monitor</div>
@@ -678,7 +678,7 @@
 
                 <div class="meta-row">
                   <div class="pills">
-                    <div class="pill"><strong id="cur-{{ it.asin }}">--</strong></div>
+                    <div class="pill"><strong id="cur-{{ it.asin }}">{{ it.latest_price_text if it.latest_price_text else "--" }}</strong></div>
                     <div class="pill pill-low"><strong id="l-{{ it.asin }}">L: --</strong></div>
                     <div class="pill pill-high"><strong id="h-{{ it.asin }}">H: --</strong></div>
 
@@ -942,7 +942,11 @@ document.addEventListener('click', (e) => {
     if(!wrap || !list) return;
 
     const deals = (marketingDeals || []).slice(0, 5);
-    if(!deals.length) return;
+    if(!deals.length){
+      list.innerHTML = `<div style="padding:14px; border-radius:14px; border:1px dashed rgba(255,255,255,0.18); color: rgba(255,255,255,0.70); font-weight:800; text-align:center;">No top deals yet</div>`;
+      wrap.style.display = "";
+      return;
+    }
 
     list.innerHTML = deals.map(d => {
       const pct = (d.best_percent !== null && d.best_percent !== undefined) ? `-${String(d.best_percent)}%` : "--";
@@ -1007,20 +1011,32 @@ function initCoupons(){
 }
 
 
-(async () => {
+window.addEventListener('load', () => {
+  try {
     renderMarketingBanners();
-  initCoupons();
+    initCoupons();
+
+    // If Chart.js fails to load for any reason, don't break the whole page.
+    if (typeof Chart === 'undefined') {
+      console.error("Chart.js not loaded");
+      return;
+    }
 
     const asins = {{ items|map(attribute="asin")|list|tojson }};
-    for (const asin of asins) {
-      try {
-        const points = await loadHistory(asin);
-        buildChart(`chart-${asin}`, points, asin);
-      } catch (e) {
-        console.error(e);
+    (async () => {
+      for (const asin of asins) {
+        try {
+          const points = await loadHistory(asin);
+          buildChart(`chart-${asin}`, points, asin);
+        } catch (e) {
+          console.error(e);
+        }
       }
-    }
-  })();
+    })();
+  } catch (e) {
+    console.error(e);
+  }
+});
 </script>
 
 </body>
