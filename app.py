@@ -901,14 +901,11 @@ def index():
 
     marketing_deals = get_marketing_deals(user_asins, limit=5)
 
-    telegram_link = build_telegram_deeplink(uid) if not user.get("telegram_chat_id") else None
-
     return render_template(
         "index.html",
         user={"email": user.get("email") or "", "telegram_chat_id": user.get("telegram_chat_id")},
         items=enriched,
         marketing_deals=marketing_deals,
-        telegram_link=telegram_link,
         announcement=announcement,
         last_run=last_run,
         is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
@@ -1485,32 +1482,24 @@ def cron_update_all():
 
 # ---------------- Telegram Bot Routes ----------------
 
-
-# ---------------- Telegram Bot Helpers ----------------
-
-def get_or_create_telegram_link_token(user_id: int) -> str:
-    """Return a stable per-user link token used with /start <token>.
-
-    We persist it in system_settings so the user's Telegram link stays the same
-    until you decide to reset it.
-    """
-    key = f"telegram_link_{user_id}"
-    token = get_setting(key, None)
-    if token:
-        return token
-
-    # Create a new token (short, URL-safe) and persist it
-    raw = f"{user_id}:{APP_SECRET}:{time.time()}:{random.random()}"
-    token = hashlib.sha256(raw.encode()).hexdigest()[:16]
-    set_setting(key, token)
-    return token
-
-
-def build_telegram_deeplink(user_id: int) -> str:
+@app.route("/telegram-setup")
+@login_required
+def telegram_setup():
     bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "PriceHawkSABot")
-    link_token = get_or_create_telegram_link_token(user_id)
-    return f"https://t.me/{bot_username}?start={link_token}"
-
+    user_id = session.get("user_id")
+    
+    # Generate a unique link token
+    link_token = hashlib.sha256(f"{user_id}:{APP_SECRET}:{time.time()}".encode()).hexdigest()[:16]
+    set_setting(f"telegram_link_{user_id}", link_token)
+    
+    telegram_link = f"https://t.me/{bot_username}?start={link_token}"
+    
+    return render_template(
+        "telegram_setup.html",
+        bot_username=bot_username,
+        link_token=link_token,
+        telegram_link=telegram_link
+    )
 
 
 @app.route("/telegram-disconnect", methods=["POST"])
