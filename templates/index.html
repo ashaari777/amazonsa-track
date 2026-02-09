@@ -131,42 +131,7 @@
         transition: 0.2s;
     }
     .btn-glow:hover { transform: translateY(-2px); }
-    <!-- Telegram Setup Panel -->
-{% if not user.get('telegram_chat_id') %}
-<div class="add-panel" style="background: linear-gradient(135deg, rgba(46, 229, 157, 0.15), rgba(46, 229, 157, 0.05)); border-color: rgba(46, 229, 157, 0.3);">
-    <div style="display: flex; align-items: center; gap: 15px;">
-        <div style="flex: 1;">
-            <div style="font-weight: 800; font-size: 1.1rem; margin-bottom: 5px; color: #2ee59d;">
-                🦅 Enable PriceHawk Alerts
-            </div>
-            <div style="color: rgba(255,255,255,0.75); font-size: 0.9rem;">
-                Get instant Telegram notifications when prices drop to your target
-            </div>
-        </div>
-        <a href="{{ url_for('telegram_setup') }}" class="btn-glow" style="white-space: nowrap;">
-            Connect Telegram
-        </a>
-    </div>
-</div>
-{% else %}
-<div class="add-panel" style="background: linear-gradient(135deg, rgba(46, 229, 157, 0.15), rgba(46, 229, 157, 0.05)); border-color: rgba(46, 229, 157, 0.3);">
-    <div style="display: flex; align-items: center; gap: 15px;">
-        <div style="flex: 1;">
-            <div style="font-weight: 800; font-size: 1.1rem; margin-bottom: 5px; color: #2ee59d;">
-                ✅ PriceHawk Alerts Active
-            </div>
-            <div style="color: rgba(255,255,255,0.75); font-size: 0.9rem;">
-                You'll receive urgent alerts on Telegram when prices drop
-            </div>
-        </div>
-        <form method="post" action="{{ url_for('telegram_disconnect') }}">
-            <button class="btn-outline" style="white-space: nowrap; color: rgba(255,90,90,0.95);">
-                Disconnect
-            </button>
-        </form>
-    </div>
-</div>
-{% endif %}
+
 
     /* Cards grid */
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 25px; }
@@ -496,6 +461,20 @@
         .mobile-header h1 { font-size: 1.5rem; font-weight: 900; margin:0; }
         .mobile-header .right{ display:flex; align-items:center; gap:10px; }
     }
+
+    /* Optional style for Disconnect button */
+    .btn-outline{
+      padding: 12px 18px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(0,0,0,0.18);
+      font-weight: 900;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-outline:hover{
+      transform: translateY(-1px);
+    }
   </style>
 </head>
 <body>
@@ -550,6 +529,43 @@
         <button class="btn-glow" type="submit">Add</button>
       </form>
     </div>
+
+    <!-- Telegram Setup Panel -->
+    {% if not user.get('telegram_chat_id') %}
+    <div class="add-panel" style="background: linear-gradient(135deg, rgba(46, 229, 157, 0.15), rgba(46, 229, 157, 0.05)); border-color: rgba(46, 229, 157, 0.3);">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="flex: 1;">
+                <div style="font-weight: 800; font-size: 1.1rem; margin-bottom: 5px; color: #2ee59d;">
+                    🦅 Enable PriceHawk Alerts
+                </div>
+                <div style="color: rgba(255,255,255,0.75); font-size: 0.9rem;">
+                    Get instant Telegram notifications when prices drop to your target
+                </div>
+            </div>
+            <a href="{{ url_for('telegram_setup') }}" class="btn-glow" style="white-space: nowrap;">
+                Connect Telegram
+            </a>
+        </div>
+    </div>
+    {% else %}
+    <div class="add-panel" style="background: linear-gradient(135deg, rgba(46, 229, 157, 0.15), rgba(46, 229, 157, 0.05)); border-color: rgba(46, 229, 157, 0.3);">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="flex: 1;">
+                <div style="font-weight: 800; font-size: 1.1rem; margin-bottom: 5px; color: #2ee59d;">
+                    ✅ PriceHawk Alerts Active
+                </div>
+                <div style="color: rgba(255,255,255,0.75); font-size: 0.9rem;">
+                    You'll receive urgent alerts on Telegram when prices drop
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('telegram_disconnect') }}">
+                <button class="btn-outline" style="white-space: nowrap; color: rgba(255,90,90,0.95);">
+                    Disconnect
+                </button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
