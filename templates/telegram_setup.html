@@ -27,6 +27,7 @@
     }
 
     .container {
+        width: 100%;
         max-width: 600px;
         background: var(--card-bg);
         border: 1px solid var(--border);
@@ -34,6 +35,28 @@
         padding: 40px;
         backdrop-filter: blur(10px);
     }
+
+    .top{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        gap: 12px;
+        margin-bottom: 18px;
+        color: rgba(255,255,255,0.7);
+        font-weight: 700;
+        font-size: .92rem;
+    }
+    .back{
+        color: rgba(255,255,255,0.85);
+        text-decoration:none;
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(0,0,0,0.18);
+        padding: 8px 12px;
+        border-radius: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+    }
+    .back:hover{ background: rgba(255,255,255,0.05); }
 
     h1 {
         font-size: 2rem;
@@ -169,6 +192,11 @@
 <body>
 
 <div class="container">
+    <div class="top">
+        <div>{{ user.email if user and user.email else "" }}</div>
+        <a class="back" href="{{ url_for('index') }}">← Back</a>
+    </div>
+
     <h1>
         <span class="hawk-icon">🦅</span>
         Connect PriceHawk
