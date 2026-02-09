@@ -454,7 +454,11 @@ def check_and_send_target_alert(item_id, new_price_data):
 # ---------------- Marketing Deals ----------------
 
 def get_marketing_deals(exclude_asins, limit=5):
-    """Return top deals from the global pool excluding the user's ASINs."""
+    """Return 'top deals' from the global pool excluding the user's ASINs.
+
+    We try to rank by the best % we can infer (coupon text % or discount_percent),
+    but we still return items even if % is unknown so the marketing card never looks empty.
+    """
     exclude_asins = exclude_asins or []
 
     conn = db_conn()
@@ -512,8 +516,6 @@ def get_marketing_deals(exclude_asins, limit=5):
             pct_disc = None
 
         best = max([p for p in [pct_coupon, pct_disc] if p is not None], default=None)
-        if best is None:
-            continue
 
         deals.append(
             {
@@ -521,14 +523,20 @@ def get_marketing_deals(exclude_asins, limit=5):
                 "title": (r.get("item_name") or r["asin"]).strip() if r.get("item_name") else r["asin"],
                 "price_text": (r.get("price_text") or "SAR --").strip(),
                 "coupon_text": (r.get("coupon_text") or "").strip(),
-                "best_percent": int(best),
+                "best_percent": int(best) if best is not None else None,
                 "url": f"https://www.amazon.sa/dp/{r['asin']}?language=en",
                 "ts": r.get("ts") or "",
             }
         )
 
-    deals.sort(key=lambda d: (d["best_percent"], d["ts"]), reverse=True)
-    return deals[:limit]
+    # Sort: known % first, higher is better; then newest
+    def _key(d):
+        bp = d.get("best_percent")
+        return (bp is not None, (bp or -1), d.get("ts") or "")
+    deals.sort(key=_key, reverse=True)
+
+    # Cap to requested limit
+    return deals[: int(limit)][:limit]
 
 
 # ---------------- Scraper ----------------
@@ -764,7 +772,24 @@ def run_global_scrape():
     asins = [r["asin"] for r in cur.fetchall()]
     conn.close()
 
+    if not asins:
+        set_setting("global_update_running", "0")
+        set_setting("global_update_total", "0")
+        set_setting("global_update_done", "0")
+        set_setting("global_update_current_asin", "")
+        set_setting("last_global_run", now_utc_str())
+        return
+
+    # Progress tracking for Admin UI
+    set_setting("global_update_running", "1")
+    set_setting("global_update_total", str(len(asins)))
+    set_setting("global_update_done", "0")
+    set_setting("global_update_current_asin", "")
+
+    done = 0
+    total = len(asins)
     for asin in asins:
+        set_setting("global_update_current_asin", asin)
         try:
             data = run_async(scrape_one_amazon_sa, asin)
         except Exception as e:
@@ -782,7 +807,12 @@ def run_global_scrape():
             except Exception:
                 pass
 
+        done += 1
+        set_setting("global_update_done", str(done))
+
     set_setting("last_global_run", now_utc_str())
+    set_setting("global_update_running", "0")
+    set_setting("global_update_current_asin", "")
 
 
 # ---------------- Auth Wrappers ----------------
@@ -895,6 +925,7 @@ def index():
         it["latest_name"] = latest["item_name"] if latest else None
         it["latest_price_text"] = latest["price_text"] if latest else None
         it["coupon_text"] = latest["coupon_text"] if latest else None
+        it["discount_percent"] = latest["discount_percent"] if latest else None
         enriched.append(it)
 
     conn.close()
@@ -1101,13 +1132,40 @@ def admin_portal():
         interval_sec = int(get_setting("update_interval", "1800") or "1800")
         data["update_interval_minutes"] = max(5, int(interval_sec // 60))
 
+        # Global update progress (for Admin UI)
+        try:
+            data["global_update_running"] = (get_setting("global_update_running", "0") or "0")
+            data["global_update_total"] = int(get_setting("global_update_total", "0") or "0")
+            data["global_update_done"] = int(get_setting("global_update_done", "0") or "0")
+            data["global_update_current_asin"] = get_setting("global_update_current_asin", "") or ""
+        except Exception:
+            data["global_update_running"] = "0"
+            data["global_update_total"] = 0
+            data["global_update_done"] = 0
+            data["global_update_current_asin"] = ""
+
     elif tab in ("active_users", "pending_users"):
         if tab == "pending_users":
-            cur.execute("SELECT * FROM users WHERE is_approved=FALSE ORDER BY created_at DESC")
+            cur.execute(
+                """
+                SELECT u.*,
+                       (SELECT COUNT(*) FROM items i WHERE i.user_id=u.id) AS item_count
+                FROM users u
+                WHERE u.is_approved=FALSE
+                ORDER BY u.created_at DESC
+                """
+            )
         else:
-            cur.execute("SELECT * FROM users WHERE is_approved=TRUE ORDER BY created_at DESC")
+            cur.execute(
+                """
+                SELECT u.*,
+                       (SELECT COUNT(*) FROM items i WHERE i.user_id=u.id) AS item_count
+                FROM users u
+                WHERE u.is_approved=TRUE
+                ORDER BY u.created_at DESC
+                """
+            )
         data["users"] = cur.fetchall()
-
     elif tab == "items":
         user_filter = request.args.get("user_filter")
 
