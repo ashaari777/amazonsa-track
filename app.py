@@ -1513,6 +1513,36 @@ def build_telegram_deeplink(user_id: int) -> str:
 
 
 
+
+@app.route("/telegram-setup", methods=["GET"])
+@login_required
+def telegram_setup():
+    uid = session.get("user_id")
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+    user = cur.fetchone()
+    conn.close()
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    # If already connected, no need to setup again
+    if user.get("telegram_chat_id"):
+        return redirect(url_for("index"))
+
+    bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "PriceHawkSABot")
+    link_token = get_or_create_telegram_link_token(uid)
+    telegram_link = build_telegram_deeplink(uid)
+
+    return render_template(
+        "telegram_setup.html",
+        user={"email": user.get("email") or ""},
+        bot_username=bot_username,
+        link_token=link_token,
+        telegram_link=telegram_link,
+    )
+
 @app.route("/telegram-disconnect", methods=["POST"])
 @login_required
 def telegram_disconnect():
@@ -1580,6 +1610,100 @@ def telegram_webhook():
     except Exception as e:
         print(f"Webhook error: {e}")
         return "OK", 200
+
+
+
+@app.route("/price-monitoring", methods=["GET"])
+@login_required
+def price_monitoring():
+    uid = session.get("user_id")
+    conn = db_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+    user = cur.fetchone()
+    if not user:
+        conn.close()
+        session.clear()
+        return redirect(url_for("login"))
+
+    if not user.get("is_approved"):
+        conn.close()
+        return redirect(url_for("waitlist_page"))
+
+    # Only show items that have a target price set
+    cur.execute(
+        """
+        SELECT * FROM items
+        WHERE user_id=%s AND target_price_value IS NOT NULL
+        ORDER BY created_at DESC
+        """,
+        (uid,),
+    )
+    items = cur.fetchall()
+
+    rows = []
+    for it in items:
+        item_id = it["id"]
+        asin = it["asin"]
+        target = it.get("target_price_value")
+
+        # Latest record (for title + current price)
+        cur.execute(
+            """
+            SELECT item_name, price_value, price_text, ts
+            FROM price_history
+            WHERE item_id=%s
+            ORDER BY ts DESC
+            LIMIT 1
+            """,
+            (item_id,),
+        )
+        latest = cur.fetchone()
+
+        title = (latest.get("item_name") if latest else None) or asin
+        current_price_text = (latest.get("price_text") if latest else None) or "--"
+        current_price_value = (latest.get("price_value") if latest else None)
+
+        reached_ts = None
+        if target is not None:
+            # First time the price reached (<= target)
+            cur.execute(
+                """
+                SELECT ts
+                FROM price_history
+                WHERE item_id=%s
+                  AND price_value IS NOT NULL
+                  AND price_value > 0
+                  AND price_value <= %s
+                ORDER BY ts ASC
+                LIMIT 1
+                """,
+                (item_id, float(target)),
+            )
+            hit = cur.fetchone()
+            reached_ts = hit.get("ts") if hit else None
+
+        rows.append(
+            {
+                "asin": asin,
+                "title": title,
+                "target": target,
+                "current_price_text": current_price_text,
+                "current_price_value": current_price_value,
+                "reached_ts": reached_ts,
+            }
+        )
+
+    conn.close()
+
+    return render_template(
+        "price_monitoring.html",
+        user={"email": user.get("email") or ""},
+        rows=rows,
+        is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
+    )
+
 
 
 if __name__ == "__main__":
