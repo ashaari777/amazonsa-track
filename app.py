@@ -213,35 +213,6 @@ def extract_asin(text):
     # Raw ASIN
     if re.fullmatch(r"[A-Z0-9]{10}", t, re.IGNORECASE):
         return t.upper()
-def fetch_title_quick(asin: str) -> str | None:
-    """Best-effort title fetch (fast). Used when history title is missing."""
-    if not asin:
-        return None
-    url = f"https://www.amazon.sa/dp/{asin}?language=en"
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    try:
-        r = requests.get(url, headers=headers, timeout=12)
-        if r.status_code != 200:
-            return None
-        html = r.text or ""
-        m = re.search(r'id="productTitle"[^>]*>\s*([^<]+)\s*<', html)
-        if m:
-            return re.sub(r"\s+", " ", m.group(1)).strip()
-        # Fallback: <title> ... </title>
-        mt = re.search(r"<title>\s*(.*?)\s*</title>", html, re.I | re.S)
-        if mt:
-            t = re.sub(r"\s+", " ", mt.group(1)).strip()
-            # remove amazon suffixes
-            t = t.split("|")[0].strip()
-            return t or None
-    except Exception:
-        return None
-    return None
-
-
 
     # URL patterns
     patterns = [
@@ -599,26 +570,6 @@ async def scrape_one_amazon_sa(url_or_asin):
             except Exception:
                 title = None
 
-
-            # Title fallback (if blocked / missing selector)
-            if not title:
-                try:
-                    t2 = await page.title()
-                    if t2:
-                        t2 = t2.strip().split("|")[0].strip()
-                        if t2:
-                            title = t2
-                except Exception:
-                    pass
-
-                if not title and asin:
-                    try:
-                        # Try OG title
-                        og = await page.locator('meta[property="og:title"]').first.get_attribute("content", timeout=1500)
-                        if og:
-                            title = og.strip()
-                    except Exception:
-                        pass
             # Price
             price_text = None
             price_value = None
@@ -813,15 +764,7 @@ def run_global_scrape():
     asins = [r["asin"] for r in cur.fetchall()]
     conn.close()
 
-    # progress markers for admin dashboard
-    set_setting('global_update_running','1')
-    set_setting('global_update_total', str(len(asins)))
-    set_setting('global_update_done','0')
-
-    done = 0
     for asin in asins:
-        set_setting('global_update_current_asin', asin)
-
         try:
             data = run_async(scrape_one_amazon_sa, asin)
         except Exception as e:
@@ -839,11 +782,6 @@ def run_global_scrape():
             except Exception:
                 pass
 
-        done += 1
-        set_setting('global_update_done', str(done))
-
-    set_setting('global_update_running','0')
-    set_setting('global_update_current_asin','')
     set_setting("last_global_run", now_utc_str())
 
 
@@ -954,26 +892,10 @@ def index():
         )
         latest = cur.fetchone()
         it = dict(it)
-        it["latest_name"] = (latest["item_name"] if latest and latest.get("item_name") else None)
-        if not it["latest_name"]:
-            t = fetch_title_quick(it["asin"])
-            if t:
-                it["latest_name"] = t
-                # backfill to last history row (nice for future renders)
-                try:
-                    cur.execute("SELECT id FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1", (it["id"],))
-                    rr = cur.fetchone()
-                    if rr:
-                        cur.execute("UPDATE price_history SET item_name=%s WHERE id=%s", (t, rr["id"]))
-                        conn.commit()
-                except Exception:
-                    conn.rollback()
-        
+        it["latest_name"] = latest["item_name"] if latest else None
         it["latest_price_text"] = latest["price_text"] if latest else None
         it["coupon_text"] = latest["coupon_text"] if latest else None
         enriched.append(it)
-
-    has_target_items = any((it.get('target_price_value') is not None) for it in enriched)
 
     conn.close()
 
@@ -987,108 +909,11 @@ def index():
         items=enriched,
         marketing_deals=marketing_deals,
         telegram_link=telegram_link,
-        has_target_items=has_target_items,
         announcement=announcement,
         last_run=last_run,
         is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
     )
 
-
-
-@app.route("/price-monitoring", methods=["GET"])
-@login_required
-def price_monitoring():
-    uid = session.get("user_id")
-    conn = db_conn()
-    cur = conn.cursor()
-
-    # Load user (must be approved)
-    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
-    user = cur.fetchone()
-    if not user or not user.get("is_approved"):
-        conn.close()
-        return redirect(url_for("index"))
-
-    # Only items with target set
-    cur.execute(
-        "SELECT * FROM items WHERE user_id=%s AND target_price_value IS NOT NULL ORDER BY created_at DESC",
-        (uid,),
-    )
-    items = cur.fetchall()
-
-    rows = []
-    for it in items:
-        cur.execute(
-            """
-            SELECT * FROM price_history
-            WHERE item_id=%s AND price_value IS NOT NULL
-            ORDER BY ts DESC
-            LIMIT 1
-            """,
-            (it["id"],),
-        )
-        latest = cur.fetchone()
-
-        latest_name = (latest.get("item_name") if latest else None) or it.get("asin")
-        latest_price_text = (latest.get("price_text") if latest else None) or "Pending"
-        latest_price_value = float(latest["price_value"]) if (latest and latest.get("price_value") is not None) else None
-        latest_ts = (latest.get("ts") if latest else None)
-
-        target_val = float(it["target_price_value"]) if it.get("target_price_value") is not None else None
-
-        reached_now = False
-        if latest_price_value is not None and target_val is not None:
-            reached_now = (latest_price_value <= target_val)
-
-        reached_at = None
-        if reached_now:
-            # Prefer the last notification time, because that is when we actually alerted the user
-            cur.execute(
-                """
-                SELECT notified_at FROM target_notifications
-                WHERE item_id=%s
-                ORDER BY notified_at DESC
-                LIMIT 1
-                """,
-                (it["id"],),
-            )
-            nt = cur.fetchone()
-            reached_at = (nt.get("notified_at") if nt else None) or latest_ts
-
-            # If there is no record yet, create one (so we always have a timestamp to show)
-            if not nt and reached_at:
-                try:
-                    cur.execute(
-                        """
-                        INSERT INTO target_notifications (item_id, notified_at, price_at_notification)
-                        VALUES (%s, %s, %s)
-                        """,
-                        (it["id"], reached_at, latest_price_value),
-                    )
-                    conn.commit()
-                except Exception:
-                    conn.rollback()
-
-        rows.append(
-            {
-                "asin": it["asin"],
-                "url": it["url"],
-                "title": latest_name,
-                "current_price_text": latest_price_text,
-                "target_price_value": target_val,
-                "status": "congrats" if reached_now else "watching",
-                "reached_at": reached_at,
-            }
-        )
-
-    conn.close()
-
-    return render_template(
-        "price_monitoring.html",
-        user={"email": user.get("email") or "", "telegram_chat_id": user.get("telegram_chat_id")},
-        rows=rows,
-        is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
-    )
 
 @app.route("/add", methods=["POST"])
 @login_required
@@ -1275,11 +1100,6 @@ def admin_portal():
 
         interval_sec = int(get_setting("update_interval", "1800") or "1800")
         data["update_interval_minutes"] = max(5, int(interval_sec // 60))
-
-        data['global_update_running'] = (get_setting('global_update_running','0') == '1')
-        data['global_update_total'] = int(get_setting('global_update_total','0') or '0')
-        data['global_update_done'] = int(get_setting('global_update_done','0') or '0')
-        data['global_update_current_asin'] = get_setting('global_update_current_asin','')
 
     elif tab in ("active_users", "pending_users"):
         if tab == "pending_users":
@@ -1690,32 +1510,6 @@ def build_telegram_deeplink(user_id: int) -> str:
     bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "PriceHawkSABot")
     link_token = get_or_create_telegram_link_token(user_id)
     return f"https://t.me/{bot_username}?start={link_token}"
-
-@app.route("/telegram-setup", methods=["GET"])
-@login_required
-def telegram_setup():
-    uid = session.get("user_id")
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT telegram_chat_id, email FROM users WHERE id=%s", (uid,))
-    u = cur.fetchone()
-    conn.close()
-
-    # If already connected, just bounce back to dashboard
-    if u and u.get("telegram_chat_id"):
-        return redirect(url_for("index"))
-
-    bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "PriceHawkSABot")
-    link_token = get_or_create_telegram_link_token(uid)
-    telegram_link = build_telegram_deeplink(uid)
-
-    return render_template(
-        "telegram_setup.html",
-        bot_username=bot_username,
-        link_token=link_token,
-        telegram_link=telegram_link,
-    )
-
 
 
 
