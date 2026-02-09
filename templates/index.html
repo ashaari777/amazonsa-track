@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Zarss • Amazon.sa Price Tracker</title>
+  <title>Price Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
@@ -475,6 +475,64 @@
     .btn-outline:hover{
       transform: translateY(-1px);
     }
+  /* --- Subscribe Modal --- */
+.ph-modal-overlay{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 18px;
+  z-index: 9999;
+}
+.ph-modal{
+  width: 100%;
+  max-width: 520px;
+  background: rgba(30, 30, 50, 0.92);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 18px;
+  padding: 18px 18px 16px 18px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.35);
+}
+.ph-modal-title{
+  font-weight: 950;
+  font-size: 1.05rem;
+  margin-bottom: 8px;
+}
+.ph-modal-text{
+  color: rgba(255,255,255,0.78);
+  line-height: 1.45;
+  font-weight: 650;
+  margin-bottom: 14px;
+}
+.ph-modal-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ph-btn{
+  border-radius: 14px;
+  padding: 10px 16px;
+  font-weight: 900;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(0,0,0,0.20);
+  color:#fff;
+  transition: 0.15s;
+}
+.ph-btn:hover{ transform: translateY(-1px); }
+.ph-btn-primary{
+  border: none;
+  background: linear-gradient(135deg, #d53369, #daae51);
+  box-shadow: 0 10px 25px rgba(213,51,105,0.25);
+}
+.ph-btn-secondary{
+  color: rgba(255,255,255,0.85);
+}
   </style>
 </head>
 <body>
@@ -542,9 +600,7 @@
                     Get instant Telegram notifications when prices drop to your target
                 </div>
             </div>
-            <a href="{{ url_for('telegram_setup') }}" class="btn-glow" style="white-space: nowrap;">
-                Connect Telegram
-            </a>
+            <button type="button" class="btn-glow" style="white-space: nowrap;" onclick="openSubscribeModal()">Subscribe</button>
         </div>
     </div>
     {% else %}
@@ -566,6 +622,19 @@
         </div>
     </div>
     {% endif %}
+
+<!-- Subscribe Modal -->
+<div id="subscribeOverlay" class="ph-modal-overlay" style="display:none;">
+  <div class="ph-modal">
+    <div class="ph-modal-title">Enable PriceHawk Alerts</div>
+    <div class="ph-modal-text">We’ll notify you on Telegram the moment an item reaches your target price.</div>
+    <div class="ph-modal-actions">
+      <button type="button" class="ph-btn ph-btn-secondary" onclick="closeSubscribeModal()">Later</button>
+      <button type="button" class="ph-btn ph-btn-primary" onclick="confirmSubscribe()">Sure</button>
+    </div>
+  </div>
+</div>
+
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -651,6 +720,37 @@
   // Keepa-like chart style
   Chart.defaults.color = 'rgba(255,255,255,0.70)';
   Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+
+
+const telegramDeeplink = {{ telegram_link|tojson }};
+
+function openSubscribeModal(){
+  const ov = document.getElementById('subscribeOverlay');
+  if(!ov) return;
+  ov.style.display = 'flex';
+}
+
+function closeSubscribeModal(){
+  const ov = document.getElementById('subscribeOverlay');
+  if(!ov) return;
+  ov.style.display = 'none';
+}
+
+function confirmSubscribe(){
+  closeSubscribeModal();
+  if(telegramDeeplink){
+    window.open(telegramDeeplink, '_blank', 'noopener,noreferrer');
+  } else {
+    alert('Telegram is not configured yet.');
+  }
+}
+
+// Close modal when clicking outside
+document.addEventListener('click', (e) => {
+  const ov = document.getElementById('subscribeOverlay');
+  if(!ov || ov.style.display === 'none') return;
+  if(e.target === ov) closeSubscribeModal();
+});
 
   async function loadHistory(asin) {
     const r = await fetch(`/history/${asin}.json?t=${new Date().getTime()}`);
