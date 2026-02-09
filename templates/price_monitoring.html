@@ -203,11 +203,11 @@
             </div>
 
             <div class="row" style="margin-top: 12px;">
-              {% if r.reached_ts %}
+              {% if r.status == 'congrats' %}
                 <span class="pill pill-ok">Congrats 🎯</span>
-                <span class="pill pill-ok">
-                  {{ r.reached_ts.strftime('%Y-%m-%d %H:%M') if r.reached_ts.strftime else r.reached_ts }}
-                </span>
+                {% if r.reached_at %}
+                  <span class="pill pill-ok">{{ r.reached_at }}</span>
+                {% endif %}
               {% else %}
                 <span class="pill pill-warn">Still watching 🦅</span>
               {% endif %}
