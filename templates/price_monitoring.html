@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Price monitoring • PriceHawk</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root{
+        --bg: #0f0c29;
+        --sidebar: #16162d;
+        --card-bg: rgba(30, 30, 50, 0.55);
+        --border: rgba(255,255,255,0.10);
+        --text: rgba(255,255,255,0.95);
+        --text-muted: rgba(255,255,255,0.65);
+        --accent: #d53369;
+        --gold: #daae51;
+        --ok: #2ee59d;
+        --bad: rgba(255,90,90,0.95);
+    }
+    *{ box-sizing:border-box; }
+    body{
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        margin:0;
+        background: var(--bg);
+        color: var(--text);
+        display:flex;
+        min-height:100vh;
+    }
+    .sidebar {
+        width: 250px;
+        background: var(--sidebar);
+        padding: 25px;
+        display:flex;
+        flex-direction:column;
+        gap:15px;
+        position: fixed;
+        top:0; bottom:0; left:0;
+    }
+    .user-email-top{ font-weight:700; color:#fff; margin-bottom: 8px; }
+    .nav-item {
+        padding: 12px 14px;
+        border-radius: 12px;
+        text-decoration:none;
+        color:#fff;
+        font-weight:600;
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        transition:0.2s;
+        background: transparent;
+        border: 0;
+        width: 100%;
+        cursor: pointer;
+        text-align:left;
+        font-family: inherit;
+        font-size: 1rem;
+    }
+    .nav-item:hover{ background: rgba(255,255,255,0.07); }
+    .nav-item.active{ background: rgba(218, 174, 81, 0.18); border:1px solid rgba(218, 174, 81, 0.35); }
+    .spacer{ flex:1; }
+
+    .main { margin-left: 250px; flex: 1; padding: 30px 40px; width: 100%; }
+    .header{
+        display:flex;
+        justify-content:space-between;
+        align-items:flex-end;
+        gap: 14px;
+        margin-bottom: 18px;
+    }
+    .header h1{
+        margin:0;
+        font-size: 1.7rem;
+        font-weight: 950;
+    }
+    .sub{
+        color: var(--text-muted);
+        font-weight: 700;
+        margin-top: 6px;
+    }
+    .btn-outline{
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(0,0,0,0.20);
+        color: #fff;
+        padding: 10px 14px;
+        border-radius: 14px;
+        cursor:pointer;
+        font-weight: 800;
+        font-family: inherit;
+        text-decoration:none;
+        display:inline-block;
+        white-space:nowrap;
+    }
+    .btn-outline:hover{ background: rgba(255,255,255,0.05); }
+
+    .grid{
+        display:grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 18px;
+    }
+    .card{
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 16px;
+        backdrop-filter: blur(10px);
+    }
+    .title{
+        font-weight: 950;
+        margin: 0 0 10px 0;
+        line-height: 1.25;
+        font-size: 1.0rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .row{
+        display:flex;
+        justify-content:space-between;
+        gap: 10px;
+        align-items:center;
+        margin-top: 8px;
+        flex-wrap:wrap;
+    }
+    .pill{
+        font-size: .82rem;
+        font-weight: 900;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(0,0,0,0.22);
+        color:#fff;
+        white-space:nowrap;
+    }
+    .pill-ok{
+        border-color: rgba(46,229,157,0.35);
+        background: rgba(46,229,157,0.10);
+        color: rgba(46,229,157,0.98);
+    }
+    .pill-warn{
+        border-color: rgba(218,174,81,0.35);
+        background: rgba(218,174,81,0.10);
+        color: rgba(255,255,255,0.92);
+    }
+    .pill-target{
+        border-color: rgba(255,255,255,0.14);
+        background: rgba(0,0,0,0.18);
+        color: rgba(255,255,255,0.85);
+    }
+    .small{
+        color: rgba(255,255,255,0.70);
+        font-weight: 700;
+        font-size: .88rem;
+        margin-top: 8px;
+        line-height: 1.35;
+    }
+
+    @media (max-width: 900px) {
+        .sidebar{ display:none; }
+        .main{ margin-left:0; padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="user-email-top">{{ user["email"] }}</div>
+    <a href="{{ url_for('index') }}" class="nav-item"><span>Dashboard</span></a>
+    <div class="nav-item active"><span>Price monitoring</span></div>
+    {% if is_admin %}
+      <a href="{{ url_for('admin_portal') }}" class="nav-item"><span>Admin</span></a>
+    {% endif %}
+    <div class="spacer"></div>
+    <form method="post" action="{{ url_for('logout') }}">
+      <button type="submit" class="nav-item">Logout</button>
+    </form>
+  </div>
+
+  <div class="main">
+    <div class="header">
+      <div>
+        <h1>🎯 Price monitoring</h1>
+        <div class="sub">Only items with a target price are shown here</div>
+      </div>
+      <a class="btn-outline" href="{{ url_for('index') }}">← Back</a>
+    </div>
+
+    {% if not rows %}
+      <div class="card">
+        <div style="font-weight: 900; font-size: 1.05rem; margin-bottom: 6px;">No target prices yet</div>
+        <div class="small">Set a target price on any item, then come back here to see its status.</div>
+      </div>
+    {% else %}
+      <div class="grid">
+        {% for r in rows %}
+          <div class="card">
+            <div class="title" title="{{ r.title }}">{{ r.title }}</div>
+
+            <div class="row">
+              <span class="pill">Current: {{ r.current_price_text }}</span>
+              {% if r.target is not none %}
+                <span class="pill pill-target">Target: {{ '%.2f'|format(r.target|float) }}</span>
+              {% endif %}
+            </div>
+
+            <div class="row" style="margin-top: 12px;">
+              {% if r.reached_ts %}
+                <span class="pill pill-ok">Congrats 🎯</span>
+                <span class="pill pill-ok">
+                  {{ r.reached_ts.strftime('%Y-%m-%d %H:%M') if r.reached_ts.strftime else r.reached_ts }}
+                </span>
+              {% else %}
+                <span class="pill pill-warn">Still watching 🦅</span>
+              {% endif %}
+            </div>
+
+            <div class="small">ASIN: {{ r.asin }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>
