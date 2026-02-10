@@ -67,7 +67,7 @@
       <div class="stat-card"><div class="stat-val">{{ data.total_users }}</div><div>Total Users</div></div>
       <div class="stat-card"><div class="stat-val">{{ data.total_items }}</div><div>Tracked Items</div></div>
       <div class="stat-card">
-          <div style="font-size: 1.1rem; color: #4ade80; font-weight: bold;">{{ data.last_run.split(' ')[1] if ' ' in data.last_run else 'Pending' }}</div>
+          <div style="font-size: 1.1rem; color: #4ade80; font-weight: bold;"><span class="js-local-dt" data-utc="{{ (data.last_run|replace(' ', 'T')) ~ 'Z' }}">{{ data.last_run }}</span></div>
           <div>Last Global Update</div>
           <div id="next-update-countdown" style="font-size: 0.85rem; color: #8b8b9e; margin-top: 5px;">Next in: --</div>
       </div>
@@ -123,8 +123,8 @@
           <tr>
             <td>{{ u.email }}</td>
             <td>{{ u.location or 'Unknown' }}</td>
-            <td>{{ u.created_at.split(' ')[0] }}</td>
-            <td>{{ u.last_login_at or '-' }}</td>
+            <td><span class="js-local-dt" data-utc="{{ u.created_at|replace(' ', 'T') }}Z">{{ u.created_at }}</span></td>
+            <td>{% if u.last_login_at %}<span class="js-local-dt" data-utc="{{ u.last_login_at|replace(' ', 'T') }}Z">{{ u.last_login_at }}</span>{% else %}-{% endif %}</td>
             <td>{{ u.login_count or 0 }}</td>
             <td>
               {% if tab == 'pending_users' %}
@@ -172,7 +172,7 @@
               <td>{{ it.asin }}</td>
               <td style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.latest_name or 'Pending...' }}</td>
               <td>{{ it.latest_price_text or '--' }}</td>
-              <td style="font-size:0.85rem; color:#8b8b9e;">{{ it.latest_ts or 'Never' }}</td>
+              <td style="font-size:0.85rem; color:#8b8b9e;">{% if it.latest_ts %}<span class="js-local-dt" data-utc="{{ it.latest_ts|replace(' ', 'T') }}Z">{{ it.latest_ts }}</span>{% else %}Never{% endif %}</td>
               <td>
                 <form method="post" action="{{ url_for('admin_update_item_by_id', item_id=it.id) }}" style="display:inline; margin-right:8px;">
                   <button class="btn btn-outline" style="font-size:0.75rem; padding:5px 12px;">Update</button>
@@ -190,6 +190,16 @@
 </div>
 
 <script>
+function localizeDateTimes(){
+  document.querySelectorAll('.js-local-dt').forEach(el => {
+    const v = el.getAttribute('data-utc') || '';
+    const dt = new Date(v);
+    if (isNaN(dt.getTime())) return;
+    el.textContent = dt.toLocaleString();
+  });
+}
+localizeDateTimes();
+
 // Countdown timer for next update
 (function() {
     const lastRunStr = "{{ data.last_run }}";
@@ -200,6 +210,7 @@
     
     // Parse last run time
     const lastRun = new Date(lastRunStr.replace(' ', 'T') + 'Z');
+    if (isNaN(lastRun.getTime())) return;
     
     function updateCountdown() {
         const now = new Date();
