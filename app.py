@@ -465,7 +465,10 @@ def get_marketing_deals(exclude_asins, limit=5):
             """
             SELECT DISTINCT ON (i.asin)
                 i.asin,
-                ph.item_name,
+            COALESCE(
+                (SELECT item_name FROM price_history WHERE item_id=i.id AND item_name IS NOT NULL AND item_name <> '' ORDER BY ts DESC LIMIT 1),
+                ph.item_name
+            ) AS item_name,
                 ph.price_text,
                 ph.coupon_text,
                 ph.discount_percent,
@@ -683,6 +686,10 @@ def write_history(item_id, data):
     )
     latest = cur.fetchone()
 
+    # Keep the last known title if the current scrape missed it
+    if (not data.get("item_name")) and latest and latest.get("item_name"):
+        data["item_name"] = latest.get("item_name")
+
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
         interval_sec = int(interval_str)
@@ -892,9 +899,26 @@ def index():
         )
         latest = cur.fetchone()
         it = dict(it)
-        it["latest_name"] = latest["item_name"] if latest else None
-        it["latest_price_text"] = latest["price_text"] if latest else None
-        it["coupon_text"] = latest["coupon_text"] if latest else None
+        title = None
+        if latest and latest.get("item_name"):
+            title = (latest.get("item_name") or "").strip() or None
+        if not title:
+            cur.execute(
+                """
+                SELECT item_name
+                FROM price_history
+                WHERE item_id=%s AND item_name IS NOT NULL AND item_name <> ''
+                ORDER BY ts DESC
+                LIMIT 1
+                """,
+                (it["id"],),
+            )
+            trow = cur.fetchone()
+            if trow and trow.get("item_name"):
+                title = (trow.get("item_name") or "").strip() or None
+        it["latest_name"] = title
+        it["latest_price_text"] = latest.get("price_text") if latest else None
+        it["coupon_text"] = latest.get("coupon_text") if latest else None
         enriched.append(it)
 
     conn.close()
@@ -1024,6 +1048,18 @@ def price_monitoring():
 def add():
     raw = (request.form.get("item") or "").strip()
     asin = extract_asin(raw)
+    # Resolve Amazon short-links (e.g., https://amzn.eu/...) to the final Amazon URL, then extract ASIN
+    if (not asin) and raw.lower().startswith(("http://", "https://")):
+        try:
+            if re.search(r"https?://(www\.)?amzn\.(eu|to)/", raw, re.IGNORECASE):
+                r = requests.get(raw, allow_redirects=True, timeout=10, headers={"User-Agent": USER_AGENT})
+                final_url = (r.url or "").strip()
+                if final_url:
+                    asin = extract_asin(final_url)
+                    if asin:
+                        raw = final_url
+        except Exception:
+            pass
     if not asin:
         flash("Please paste a valid Amazon.sa link or ASIN.", "error")
         return redirect(url_for("index"))
@@ -1090,6 +1126,9 @@ def delete(asin):
 
     conn.close()
     flash("Deleted.", "ok")
+    next_ = request.args.get("next") or request.form.get("next") or ""
+    if next_ == "monitoring":
+        return redirect(url_for("price_monitoring"))
     return redirect(url_for("index"))
 
 
@@ -1217,7 +1256,7 @@ def admin_portal():
 
         base_query = """
             SELECT i.*, u.email AS user_email,
-                   (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
+                   (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id AND ph.item_name IS NOT NULL AND ph.item_name <> '' ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
                    (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text,
                    (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
             FROM items i
