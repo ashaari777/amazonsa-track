@@ -496,7 +496,7 @@
     <div class="header">
       <div class="header-left">
         <h1>Amazon.sa Price Tracker</h1>
-        <div class="last-update">Last update: {{ last_run }}</div>
+        <div class="last-update">Last update: <span class="js-local-dt" data-utc="{{ last_run|replace(' ', 'T') }}Z">{{ last_run }}</span></div>
       </div>
       <div class="header-right">
         <form method="post" action="{{ url_for('logout') }}">
@@ -508,7 +508,7 @@
     <div class="mobile-header">
       <div>
         <h1>Tracker</h1>
-        <div class="last-update">{{ last_run }}</div>
+        <div class="last-update"><span class="js-local-dt" data-utc="{{ last_run|replace(' ', 'T') }}Z">{{ last_run }}</span></div>
       </div>
       <div class="right">
         <form method="post" action="{{ url_for('logout') }}">
@@ -685,12 +685,27 @@
     const raw = (points || []).filter(p => p.price_value > 0);
     if (raw.length === 0) return;
 
-    // Keepa style: extend to NOW
-    const lastPoint = raw[raw.length - 1];
-    const now = new Date();
-    const lastDate = new Date((lastPoint.ts || '').replace(' ', 'T') + 'Z');
+    // Downsample chart points to ~1 record per hour (keeps the first point, then >=60min)
+    const parseTsUTC = (ts) => new Date(String(ts || "").replace(" ", "T") + "Z");
+    function downsampleHourly(arr){
+      const out = [];
+      let lastT = null;
+      for (const p of (arr || [])){
+        const dt = parseTsUTC(p.ts);
+        if (isNaN(dt.getTime())) continue;
+        if (!lastT){ out.push(p); lastT = dt; continue; }
+        if ((dt - lastT) >= 60 * 60 * 1000){ out.push(p); lastT = dt; }
+      }
+      return out;
+    }
+    const sampled = downsampleHourly(raw);
 
-    const dataPoints = raw.slice();
+    // Keepa style: extend to NOW (for chart data)
+    const lastPoint = (sampled.length ? sampled[sampled.length - 1] : raw[raw.length - 1]);
+    const now = new Date();
+    const lastDate = parseTsUTC(lastPoint.ts);
+
+    const dataPoints = (sampled.length ? sampled : raw).slice();
     if (!isNaN(lastDate.getTime())) {
       if ((now - lastDate) > 1000 * 60 * 60 * 2) {
         dataPoints.push({
@@ -703,12 +718,26 @@
     const labels = dataPoints.map(p => p.ts);
     const prices = dataPoints.map(p => p.price_value);
 
+    // Build local-day labels (show each day once on the x-axis)
+    const dayKeys = labels.map(ts => {
+      const dt = parseTsUTC(ts);
+      if (isNaN(dt.getTime())) return "";
+      return dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,"0") + "-" + String(dt.getDate()).padStart(2,"0");
+    });
+    const dayText = labels.map(ts => {
+      const dt = parseTsUTC(ts);
+      if (isNaN(dt.getTime())) return "";
+      return dt.toLocaleDateString([], { day: "numeric", month: "short" });
+    });
+    const dayDisplay = labels.map((_, i) => (i === 0 || dayKeys[i] !== dayKeys[i-1]) ? dayText[i] : "");
+
+
     const fmtSAR = (n) => {
       if (n === null || n === undefined || isNaN(n)) return "--";
       return "SAR " + Number(n).toFixed(2);
     };
 
-    const current = prices[prices.length - 1];
+    const current = raw[raw.length - 1].price_value;
 
     // Compute min/max from the REAL history points (exclude the optional extension-to-now point)
     const baseVals = (raw || []).map(p => Number(p.price_value)).filter(v => !isNaN(v) && v > 0);
@@ -790,9 +819,10 @@
             padding: 10,
             callbacks: {
               label: (ctx) => {
-                const t = String(ctx.label || "");
-                const time = (t.includes(" ") ? t.split(" ").slice(1).join(" ") : "").trim();
-                const hhmm = time ? time.slice(0,5) : "";
+                const dt = parseTsUTC(ctx.label);
+                const hhmm = (!isNaN(dt.getTime()))
+                  ? dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                  : "";
                 return ctx.parsed.y.toFixed(2) + (hhmm ? ("  " + hhmm) : "");
               },
               title: (items) => {
@@ -818,18 +848,19 @@
                 size: 10
               },
               callback: function(value, index) {
+                // Show each day label only once (based on displayed ticks)
+                if (index === 0) this.__lastDayKey = null;
+
                 const label = String(this.getLabelForValue(value) || '');
-                const d = label.split(' ')[0];
-                // format YYYY-MM-DD -> D Mon
-                if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
-                  const y = parseInt(d.slice(0,4),10);
-                  const m = parseInt(d.slice(5,7),10)-1;
-                  const day = parseInt(d.slice(8,10),10);
-                  const dt = new Date(Date.UTC(y,m,day));
-                  const mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-                  return day + ' ' + mons[m];
-                }
-                return d;
+                const dt = parseTsUTC(label);
+                if (isNaN(dt.getTime())) return '';
+
+                const key = dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
+                const txt = dt.toLocaleDateString([], { day: 'numeric', month: 'short' });
+
+                if (this.__lastDayKey === key) return '';
+                this.__lastDayKey = key;
+                return txt;
               }
             }
           },
@@ -940,7 +971,18 @@ function initCoupons(){
 }
 
 
+
+
+function localizeDateTimes(){
+  document.querySelectorAll('.js-local-dt').forEach(el => {
+    const v = el.getAttribute('data-utc') || '';
+    const dt = new Date(v);
+    if (isNaN(dt.getTime())) return;
+    el.textContent = dt.toLocaleString();
+  });
+}
 (async () => {
+    localizeDateTimes();
     renderMarketingBanners();
   initCoupons();
 
