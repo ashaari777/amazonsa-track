@@ -930,6 +930,86 @@ def index():
     )
 
 
+
+
+@app.route("/price-monitoring")
+@login_required
+def price_monitoring():
+    uid = session.get("user_id")
+    conn = db_conn()
+    cur = conn.cursor()
+
+    # user (for sidebar/header)
+    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+    user = cur.fetchone()
+    if not user:
+        conn.close()
+        session.clear()
+        return redirect(url_for("login"))
+
+    # Only items with a target price set
+    cur.execute(
+        "SELECT * FROM items WHERE user_id=%s AND target_price_value IS NOT NULL ORDER BY created_at DESC",
+        (uid,),
+    )
+    items = cur.fetchall()
+
+    enriched = []
+    for it in items:
+        it = dict(it)
+
+        # Latest history (current price + title)
+        cur.execute(
+            "SELECT ts, item_name, price_text, price_value FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1",
+            (it["id"],),
+        )
+        latest = cur.fetchone()
+
+        # Last known non-empty title (avoid falling back to ASIN)
+        cur.execute(
+            "SELECT item_name FROM price_history WHERE item_id=%s AND item_name IS NOT NULL AND item_name <> '' ORDER BY ts DESC LIMIT 1",
+            (it["id"],),
+        )
+        last_title = cur.fetchone()
+
+        it["title"] = (last_title["item_name"] if last_title else None) or (latest["item_name"] if latest else None) or it.get("asin")
+        it["current_price_text"] = latest["price_text"] if latest and latest.get("price_text") else None
+        it["current_price_value"] = latest["price_value"] if latest and latest.get("price_value") is not None else None
+        it["current_ts"] = latest["ts"] if latest and latest.get("ts") else None
+
+        # Target reached timestamp (we store this when Telegram notification was sent)
+        cur.execute(
+            "SELECT notified_at, price_at_notification FROM target_notifications WHERE item_id=%s ORDER BY notified_at DESC LIMIT 1",
+            (it["id"],),
+        )
+        nt = cur.fetchone()
+        it["notified_at"] = nt["notified_at"] if nt else None
+        it["price_at_notification"] = nt["price_at_notification"] if nt else None
+
+        # Status logic
+        reached = False
+        if it.get("notified_at"):
+            reached = True
+        else:
+            # fallback: if current price already <= target price (in case notifications were disabled temporarily)
+            try:
+                if it.get("current_price_value") is not None and it.get("target_price_value") is not None:
+                    reached = float(it["current_price_value"]) <= float(it["target_price_value"])
+            except Exception:
+                reached = False
+
+        it["status"] = "reached" if reached else "watching"
+        enriched.append(it)
+
+    conn.close()
+
+    return render_template(
+        "price_monitoring.html",
+        user={"email": user.get("email") or "", "telegram_chat_id": user.get("telegram_chat_id")},
+        items=enriched,
+        is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
+    )
+
 @app.route("/add", methods=["POST"])
 @login_required
 def add():
