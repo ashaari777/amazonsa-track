@@ -45,6 +45,10 @@ USER_AGENT = (
 )
 
 app = Flask(__name__)
+
+# Prevent concurrent global scrapes (avoids worker OOM/timeouts)
+GLOBAL_SCRAPE_LOCK = threading.Lock()
+
 app.secret_key = APP_SECRET
 
 
@@ -465,10 +469,7 @@ def get_marketing_deals(exclude_asins, limit=5):
             """
             SELECT DISTINCT ON (i.asin)
                 i.asin,
-            COALESCE(
-                (SELECT item_name FROM price_history WHERE item_id=i.id AND item_name IS NOT NULL AND item_name <> '' ORDER BY ts DESC LIMIT 1),
-                ph.item_name
-            ) AS item_name,
+                ph.item_name,
                 ph.price_text,
                 ph.coupon_text,
                 ph.discount_percent,
@@ -686,10 +687,6 @@ def write_history(item_id, data):
     )
     latest = cur.fetchone()
 
-    # Keep the last known title if the current scrape missed it
-    if (not data.get("item_name")) and latest and latest.get("item_name"):
-        data["item_name"] = latest.get("item_name")
-
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
         interval_sec = int(interval_str)
@@ -747,7 +744,21 @@ def write_history(item_id, data):
         print(f"Alert check error: {e}")
 
 
+
 def run_global_scrape():
+    """Run global scrape with a process-wide lock to avoid overlapping runs."""
+    if not GLOBAL_SCRAPE_LOCK.acquire(blocking=False):
+        return
+    try:
+        _run_global_scrape_impl()
+    finally:
+        try:
+            GLOBAL_SCRAPE_LOCK.release()
+        except Exception:
+            pass
+
+
+def _run_global_scrape_impl():
     """Global scrape: scrape each distinct ASIN once then write to each user's item."""
 
     # Global interval gate
@@ -899,26 +910,9 @@ def index():
         )
         latest = cur.fetchone()
         it = dict(it)
-        title = None
-        if latest and latest.get("item_name"):
-            title = (latest.get("item_name") or "").strip() or None
-        if not title:
-            cur.execute(
-                """
-                SELECT item_name
-                FROM price_history
-                WHERE item_id=%s AND item_name IS NOT NULL AND item_name <> ''
-                ORDER BY ts DESC
-                LIMIT 1
-                """,
-                (it["id"],),
-            )
-            trow = cur.fetchone()
-            if trow and trow.get("item_name"):
-                title = (trow.get("item_name") or "").strip() or None
-        it["latest_name"] = title
-        it["latest_price_text"] = latest.get("price_text") if latest else None
-        it["coupon_text"] = latest.get("coupon_text") if latest else None
+        it["latest_name"] = latest["item_name"] if latest else None
+        it["latest_price_text"] = latest["price_text"] if latest else None
+        it["coupon_text"] = latest["coupon_text"] if latest else None
         enriched.append(it)
 
     conn.close()
@@ -936,130 +930,11 @@ def index():
     )
 
 
-@app.route("/price-monitoring")
-@login_required
-def price_monitoring():
-    uid = session.get("user_id")
-
-    conn = db_conn()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
-    user = cur.fetchone()
-    if not user:
-        conn.close()
-        session.clear()
-        return redirect(url_for("login"))
-
-    if not user.get("is_approved"):
-        conn.close()
-        return redirect(url_for("waitlist_page"))
-
-    # This page is meant for subscribed users (Telegram connected)
-    if not user.get("telegram_chat_id"):
-        conn.close()
-        flash("Connect Telegram first to enable price monitoring.", "error")
-        return redirect(url_for("telegram_setup"))
-
-    cur.execute(
-        """
-        SELECT
-            i.id,
-            i.asin,
-            i.url,
-            i.created_at,
-            i.target_price_value,
-            ph.item_name,
-            ph.price_text,
-            ph.price_value,
-            ph.ts AS last_price_ts,
-            tn.reached_at
-        FROM items i
-        LEFT JOIN LATERAL (
-            SELECT item_name, price_text, price_value, ts
-            FROM price_history
-            WHERE item_id = i.id
-            ORDER BY ts DESC
-            LIMIT 1
-        ) ph ON true
-        LEFT JOIN (
-            SELECT item_id, MIN(notified_at) AS reached_at
-            FROM target_notifications
-            GROUP BY item_id
-        ) tn ON tn.item_id = i.id
-        WHERE i.user_id = %s
-          AND i.target_price_value IS NOT NULL
-        ORDER BY i.created_at DESC
-        """,
-        (uid,),
-    )
-
-    rows = cur.fetchall()
-    conn.close()
-
-    items = []
-    for r in rows or []:
-        name = (r.get("item_name") or "").strip() or r.get("asin") or "Item"
-
-        price_text = (r.get("price_text") or "").strip()
-        if not price_text:
-            pv = r.get("price_value")
-            try:
-                price_text = f"SAR {float(pv):.2f}" if pv is not None else "SAR --"
-            except Exception:
-                price_text = "SAR --"
-
-        reached_at = r.get("reached_at")
-        status = "Still watching 🦅"
-        if reached_at:
-            status = "Congrats 🎯"
-
-        try:
-            target_val = float(r.get("target_price_value")) if r.get("target_price_value") is not None else None
-        except Exception:
-            target_val = None
-
-        items.append(
-            {
-                "id": r.get("id"),
-                "asin": r.get("asin"),
-                "url": r.get("url"),
-                "name": name,
-                "current_price_text": price_text,
-                "target_price_value": target_val,
-                "reached_at": reached_at,
-                "status": status,
-            }
-        )
-
-    is_admin = (session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower())
-
-    return render_template(
-        "price_monitoring.html",
-        user={"email": user.get("email") or "", "telegram_chat_id": user.get("telegram_chat_id")},
-        items=items,
-        is_admin=is_admin,
-    )
-
-
-
 @app.route("/add", methods=["POST"])
 @login_required
 def add():
     raw = (request.form.get("item") or "").strip()
     asin = extract_asin(raw)
-    # Resolve Amazon short-links (e.g., https://amzn.eu/...) to the final Amazon URL, then extract ASIN
-    if (not asin) and raw.lower().startswith(("http://", "https://")):
-        try:
-            if re.search(r"https?://(www\.)?amzn\.(eu|to)/", raw, re.IGNORECASE):
-                r = requests.get(raw, allow_redirects=True, timeout=10, headers={"User-Agent": USER_AGENT})
-                final_url = (r.url or "").strip()
-                if final_url:
-                    asin = extract_asin(final_url)
-                    if asin:
-                        raw = final_url
-        except Exception:
-            pass
     if not asin:
         flash("Please paste a valid Amazon.sa link or ASIN.", "error")
         return redirect(url_for("index"))
@@ -1126,9 +1001,6 @@ def delete(asin):
 
     conn.close()
     flash("Deleted.", "ok")
-    next_ = request.args.get("next") or request.form.get("next") or ""
-    if next_ == "monitoring":
-        return redirect(url_for("price_monitoring"))
     return redirect(url_for("index"))
 
 
@@ -1256,7 +1128,7 @@ def admin_portal():
 
         base_query = """
             SELECT i.*, u.email AS user_email,
-                   (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id AND ph.item_name IS NOT NULL AND ph.item_name <> '' ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
+                   (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
                    (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text,
                    (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
             FROM items i
@@ -1613,7 +1485,13 @@ def reset(token):
     return redirect(url_for("login"))
 
 
-@app.route("/cron/update-all", methods=["GET", "POST", "HEAD"])
+
+@app.route("/ping", methods=["GET", "HEAD"])
+def ping():
+    return ("OK", 200)
+
+
+@app.route("/cron/update-all", methods=["POST", "GET", "HEAD"])
 def cron_update_all():
     if not CRON_TOKEN:
         return "CRON_TOKEN not set", 400
@@ -1621,6 +1499,17 @@ def cron_update_all():
     token = request.headers.get("X-CRON-TOKEN") or request.args.get("token") or ""
     if not hmac.compare_digest(token, CRON_TOKEN):
         return "Unauthorized", 401
+
+
+        # UptimeRobot (or browsers) may hit this endpoint with GET/HEAD.
+        # Only trigger scraping on POST to avoid worker timeouts / OOM.
+        if request.method != "POST":
+            return "OK", 200
+
+        # If a scrape is already running, don't start another one.
+        if GLOBAL_SCRAPE_LOCK.locked():
+            return "OK already running", 200
+
 
     threading.Thread(target=run_global_scrape, daemon=True).start()
     return "OK started", 200
