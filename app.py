@@ -45,10 +45,6 @@ USER_AGENT = (
 )
 
 app = Flask(__name__)
-
-# Prevent concurrent global scrapes (avoids worker OOM/timeouts)
-GLOBAL_SCRAPE_LOCK = threading.Lock()
-
 app.secret_key = APP_SECRET
 
 
@@ -139,6 +135,7 @@ def ensure_schema():
             price_value NUMERIC,
             coupon_text TEXT,
             discount_percent NUMERIC,
+            seller_name TEXT,
             error TEXT
         );
         """
@@ -469,7 +466,10 @@ def get_marketing_deals(exclude_asins, limit=5):
             """
             SELECT DISTINCT ON (i.asin)
                 i.asin,
-                ph.item_name,
+            COALESCE(
+                (SELECT item_name FROM price_history WHERE item_id=i.id AND item_name IS NOT NULL AND item_name <> '' ORDER BY ts DESC LIMIT 1),
+                ph.item_name
+            ) AS item_name,
                 ph.price_text,
                 ph.coupon_text,
                 ph.discount_percent,
@@ -551,6 +551,7 @@ async def scrape_one_amazon_sa(url_or_asin):
         "price_value": None,
         "coupon_text": None,
         "discount_percent": None,
+        "seller_name": None,
         "error": None,
     }
 
@@ -565,32 +566,86 @@ async def scrape_one_amazon_sa(url_or_asin):
             page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(650)
+            # Main content root (avoid picking sponsored/ad prices)
+            root = page.locator("#ppd")
+            try:
+                if await root.count() == 0:
+                    root = page.locator("#centerCol")
+            except Exception:
+                root = page.locator("#centerCol")
 
-            # Title
+            # Title (prefer real product title; fall back to og:title)
             title = None
             try:
-                title = await page.locator("#productTitle").first.inner_text(timeout=4000)
-                title = title.strip()
+                title = await root.locator("#productTitle").first.inner_text(timeout=4000)
+                title = (title or "").strip()
             except Exception:
                 title = None
+            if not title:
+                try:
+                    title = await page.locator("meta[property='og:title']").first.get_attribute("content", timeout=2000)
+                    title = (title or "").strip()
+                except Exception:
+                    title = None
 
-            # Price
+            # Seller / merchant name (best effort)
+            seller_name = None
+            seller_selectors = [
+                "#merchant-info",
+                "#tabular-buybox .tabular-buybox-text span",
+                "#sellerProfileTriggerId",
+                "a#sellerProfileTriggerId",
+                "#bylineInfo",
+            ]
+            for sel in seller_selectors:
+                try:
+                    t = await root.locator(sel).first.inner_text(timeout=1500)
+                    t = (t or "").strip()
+                    if t:
+                        seller_name = t
+                        break
+                except Exception:
+                    continue
+            # Clean merchant-info text to something short
+            if seller_name and "sold by" in seller_name.lower():
+                # keep part after 'Sold by'
+                try:
+                    low = seller_name.lower()
+                    idx = low.find("sold by")
+                    seller_name = seller_name[idx+len("sold by"):].strip(" :.-\n\t")
+                except Exception:
+                    pass
+
+            # Price (STRICT: only from main buybox/price blocks, not generic a-price)
             price_text = None
             price_value = None
             price_selectors = [
                 "#corePriceDisplay_desktop_feature_div span.a-price span.a-offscreen",
                 "#corePrice_feature_div span.a-price span.a-offscreen",
-                "span.a-price span.a-offscreen",
+                "#apex_desktop span.a-price span.a-offscreen",
+                "#apex_desktop_newAccordionRow span.a-price span.a-offscreen",
                 "#priceblock_ourprice",
                 "#priceblock_dealprice",
                 "#priceblock_saleprice",
+                "#newBuyBoxPrice span.a-price span.a-offscreen",
+                "#tp_price_block_total_price_ww span.a-price span.a-offscreen",
+                # Sometimes only "from SAR XXX"
+                "#corePriceDisplay_desktop_feature_div span.a-price-whole",
             ]
             for sel in price_selectors:
                 try:
-                    price_text = await page.locator(sel).first.inner_text(timeout=2500)
-                    price_text = price_text.strip()
-                    if price_text:
-                        break
+                    loc = root.locator(sel).first
+                    if await loc.count() == 0:
+                        continue
+                    t = await loc.inner_text(timeout=2500)
+                    t = (t or "").strip()
+                    if not t:
+                        continue
+                    # If we matched the whole part only, rebuild a price-ish string
+                    if sel.endswith("span.a-price-whole") and t.isdigit():
+                        t = f"SAR {t}"
+                    price_text = t
+                    break
                 except Exception:
                     continue
 
@@ -629,6 +684,7 @@ async def scrape_one_amazon_sa(url_or_asin):
                     "price_value": price_value,
                     "coupon_text": coupon_text,
                     "discount_percent": discount_percent,
+                    "seller_name": seller_name,
                 }
             )
 
@@ -687,6 +743,14 @@ def write_history(item_id, data):
     )
     latest = cur.fetchone()
 
+    # Keep the last known title if the current scrape missed it
+    if (not data.get("item_name")) and latest and latest.get("item_name"):
+        data["item_name"] = latest.get("item_name")
+
+    # Keep the last known seller if the current scrape missed it
+    if (not data.get("seller_name")) and latest and latest.get("seller_name"):
+        data["seller_name"] = latest.get("seller_name")
+
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
         interval_sec = int(interval_str)
@@ -719,7 +783,7 @@ def write_history(item_id, data):
     if insert:
         cur.execute(
             """
-            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, error)
+            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, seller_name, error)
             VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
@@ -744,21 +808,7 @@ def write_history(item_id, data):
         print(f"Alert check error: {e}")
 
 
-
 def run_global_scrape():
-    """Run global scrape with a process-wide lock to avoid overlapping runs."""
-    if not GLOBAL_SCRAPE_LOCK.acquire(blocking=False):
-        return
-    try:
-        _run_global_scrape_impl()
-    finally:
-        try:
-            GLOBAL_SCRAPE_LOCK.release()
-        except Exception:
-            pass
-
-
-def _run_global_scrape_impl():
     """Global scrape: scrape each distinct ASIN once then write to each user's item."""
 
     # Global interval gate
@@ -910,9 +960,27 @@ def index():
         )
         latest = cur.fetchone()
         it = dict(it)
-        it["latest_name"] = latest["item_name"] if latest else None
-        it["latest_price_text"] = latest["price_text"] if latest else None
-        it["coupon_text"] = latest["coupon_text"] if latest else None
+        title = None
+        if latest and latest.get("item_name"):
+            title = (latest.get("item_name") or "").strip() or None
+        if not title:
+            cur.execute(
+                """
+                SELECT item_name
+                FROM price_history
+                WHERE item_id=%s AND item_name IS NOT NULL AND item_name <> ''
+                ORDER BY ts DESC
+                LIMIT 1
+                """,
+                (it["id"],),
+            )
+            trow = cur.fetchone()
+            if trow and trow.get("item_name"):
+                title = (trow.get("item_name") or "").strip() or None
+        it["latest_name"] = title
+        it["latest_seller"] = latest.get("seller_name") if latest else None
+        it["latest_price_text"] = latest.get("price_text") if latest else None
+        it["coupon_text"] = latest.get("coupon_text") if latest else None
         enriched.append(it)
 
     conn.close()
@@ -930,16 +998,14 @@ def index():
     )
 
 
-
-
 @app.route("/price-monitoring")
 @login_required
 def price_monitoring():
     uid = session.get("user_id")
+
     conn = db_conn()
     cur = conn.cursor()
 
-    # user (for sidebar/header)
     cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
     user = cur.fetchone()
     if not user:
@@ -947,74 +1013,116 @@ def price_monitoring():
         session.clear()
         return redirect(url_for("login"))
 
-    # Only items with a target price set
+    if not user.get("is_approved"):
+        conn.close()
+        return redirect(url_for("waitlist_page"))
+
+    # This page is meant for subscribed users (Telegram connected)
+    if not user.get("telegram_chat_id"):
+        conn.close()
+        flash("Connect Telegram first to enable price monitoring.", "error")
+        return redirect(url_for("telegram_setup"))
+
     cur.execute(
-        "SELECT * FROM items WHERE user_id=%s AND target_price_value IS NOT NULL ORDER BY created_at DESC",
+        """
+        SELECT
+            i.id,
+            i.asin,
+            i.url,
+            i.created_at,
+            i.target_price_value,
+            ph.item_name,
+            ph.price_text,
+            ph.seller_name,
+            ph.price_value,
+            ph.ts AS last_price_ts,
+            tn.reached_at
+        FROM items i
+        LEFT JOIN LATERAL (
+            SELECT item_name, price_text, seller_name, price_value, ts
+            FROM price_history
+            WHERE item_id = i.id
+            ORDER BY ts DESC
+            LIMIT 1
+        ) ph ON true
+        LEFT JOIN (
+            SELECT item_id, MIN(notified_at) AS reached_at
+            FROM target_notifications
+            GROUP BY item_id
+        ) tn ON tn.item_id = i.id
+        WHERE i.user_id = %s
+          AND i.target_price_value IS NOT NULL
+        ORDER BY i.created_at DESC
+        """,
         (uid,),
     )
-    items = cur.fetchall()
 
-    enriched = []
-    for it in items:
-        it = dict(it)
-
-        # Latest history (current price + title)
-        cur.execute(
-            "SELECT ts, item_name, price_text, price_value FROM price_history WHERE item_id=%s ORDER BY ts DESC LIMIT 1",
-            (it["id"],),
-        )
-        latest = cur.fetchone()
-
-        # Last known non-empty title (avoid falling back to ASIN)
-        cur.execute(
-            "SELECT item_name FROM price_history WHERE item_id=%s AND item_name IS NOT NULL AND item_name <> '' ORDER BY ts DESC LIMIT 1",
-            (it["id"],),
-        )
-        last_title = cur.fetchone()
-
-        it["title"] = (last_title["item_name"] if last_title else None) or (latest["item_name"] if latest else None) or it.get("asin")
-        it["current_price_text"] = latest["price_text"] if latest and latest.get("price_text") else None
-        it["current_price_value"] = latest["price_value"] if latest and latest.get("price_value") is not None else None
-        it["current_ts"] = latest["ts"] if latest and latest.get("ts") else None
-
-        # Target reached timestamp (we store this when Telegram notification was sent)
-        cur.execute(
-            "SELECT notified_at, price_at_notification FROM target_notifications WHERE item_id=%s ORDER BY notified_at DESC LIMIT 1",
-            (it["id"],),
-        )
-        nt = cur.fetchone()
-        it["notified_at"] = nt["notified_at"] if nt else None
-        it["price_at_notification"] = nt["price_at_notification"] if nt else None
-
-        # Status logic
-        reached = False
-        if it.get("notified_at"):
-            reached = True
-        else:
-            # fallback: if current price already <= target price (in case notifications were disabled temporarily)
-            try:
-                if it.get("current_price_value") is not None and it.get("target_price_value") is not None:
-                    reached = float(it["current_price_value"]) <= float(it["target_price_value"])
-            except Exception:
-                reached = False
-
-        it["status"] = "reached" if reached else "watching"
-        enriched.append(it)
-
+    rows = cur.fetchall()
     conn.close()
+
+    items = []
+    for r in rows or []:
+        name = (r.get("item_name") or "").strip() or r.get("asin") or "Item"
+
+        price_text = (r.get("price_text") or "").strip()
+        if not price_text:
+            pv = r.get("price_value")
+            try:
+                price_text = f"SAR {float(pv):.2f}" if pv is not None else "SAR --"
+            except Exception:
+                price_text = "SAR --"
+
+        reached_at = r.get("reached_at")
+        status = "Still watching 🦅"
+        if reached_at:
+            status = "Congrats 🎯"
+
+        try:
+            target_val = float(r.get("target_price_value")) if r.get("target_price_value") is not None else None
+        except Exception:
+            target_val = None
+
+        items.append(
+            {
+                "id": r.get("id"),
+                "asin": r.get("asin"),
+                "url": r.get("url"),
+                "name": name,
+                "current_price_text": price_text,
+                "target_price_value": target_val,
+                "reached_at": reached_at,
+                "status": status,
+            }
+        )
+
+    is_admin = (session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower())
 
     return render_template(
         "price_monitoring.html",
         user={"email": user.get("email") or "", "telegram_chat_id": user.get("telegram_chat_id")},
-        items=enriched,
-        is_admin=(session.get("role") == "admin") or ((user.get("email") or "").lower() == SUPER_ADMIN_EMAIL.lower()),
+        items=items,
+        is_admin=is_admin,
     )
+
+
 
 @app.route("/add", methods=["POST"])
 @login_required
 def add():
     raw = (request.form.get("item") or "").strip()
     asin = extract_asin(raw)
+    # Resolve Amazon short-links (e.g., https://amzn.eu/...) to the final Amazon URL, then extract ASIN
+    if (not asin) and raw.lower().startswith(("http://", "https://")):
+        try:
+            if re.search(r"https?://(www\.)?amzn\.(eu|to)/", raw, re.IGNORECASE):
+                r = requests.get(raw, allow_redirects=True, timeout=10, headers={"User-Agent": USER_AGENT})
+                final_url = (r.url or "").strip()
+                if final_url:
+                    asin = extract_asin(final_url)
+                    if asin:
+                        raw = final_url
+        except Exception:
+            pass
     if not asin:
         flash("Please paste a valid Amazon.sa link or ASIN.", "error")
         return redirect(url_for("index"))
@@ -1081,6 +1189,9 @@ def delete(asin):
 
     conn.close()
     flash("Deleted.", "ok")
+    next_ = request.args.get("next") or request.form.get("next") or ""
+    if next_ == "monitoring":
+        return redirect(url_for("price_monitoring"))
     return redirect(url_for("index"))
 
 
@@ -1208,7 +1319,7 @@ def admin_portal():
 
         base_query = """
             SELECT i.*, u.email AS user_email,
-                   (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
+                   (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id AND ph.item_name IS NOT NULL AND ph.item_name <> '' ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
                    (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text,
                    (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
             FROM items i
@@ -1565,13 +1676,7 @@ def reset(token):
     return redirect(url_for("login"))
 
 
-
-@app.route("/ping", methods=["GET", "HEAD"])
-def ping():
-    return ("OK", 200)
-
-
-@app.route("/cron/update-all", methods=["POST", "GET", "HEAD"])
+@app.route("/cron/update-all", methods=["GET", "POST", "HEAD"])
 def cron_update_all():
     if not CRON_TOKEN:
         return "CRON_TOKEN not set", 400
@@ -1579,17 +1684,6 @@ def cron_update_all():
     token = request.headers.get("X-CRON-TOKEN") or request.args.get("token") or ""
     if not hmac.compare_digest(token, CRON_TOKEN):
         return "Unauthorized", 401
-
-
-        # UptimeRobot (or browsers) may hit this endpoint with GET/HEAD.
-        # Only trigger scraping on POST to avoid worker timeouts / OOM.
-        if request.method != "POST":
-            return "OK", 200
-
-        # If a scrape is already running, don't start another one.
-        if GLOBAL_SCRAPE_LOCK.locked():
-            return "OK already running", 200
-
 
     threading.Thread(target=run_global_scrape, daemon=True).start()
     return "OK started", 200
