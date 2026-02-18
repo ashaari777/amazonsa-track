@@ -6,7 +6,6 @@ import base64
 import hashlib
 import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor
 import random
 import requests
 
@@ -44,25 +43,6 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/144.0.0.0 Safari/537.36"
 )
-
-# --- Background scrape executor (prevents request-time Playwright crashes / timeouts) ---
-SCRAPE_EXECUTOR = ThreadPoolExecutor(max_workers=1)
-_SCRAPE_LOCK = threading.Lock()
-
-def _safe_background_scrape_and_write(item_id: int, url: str):
-    """Run scrape in background, one-at-a-time, best-effort.
-    Strategy: try lightweight HTTP scrape first (low RAM). If it fails to get a price, fallback to Playwright."""
-    try:
-        with _SCRAPE_LOCK:
-            data = scrape_one_http(url)
-            if not data or (data.get("price_value") or 0) <= 0:
-                data = run_async(scrape_one_amazon_sa, url)
-
-            if data and (data.get("price_value") or 0) > 0:
-                write_history(item_id, data)
-    except Exception:
-        pass
-
 
 app = Flask(__name__)
 app.secret_key = APP_SECRET
@@ -157,10 +137,6 @@ def ensure_schema():
             discount_percent NUMERIC,
             error TEXT
         );
-            # migrations (safe to run repeatedly)
-            cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_text TEXT")
-            cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS availability_text TEXT")
-
         """
     )
 
@@ -184,7 +160,12 @@ def ensure_schema():
         """
     )
 
-    conn.commit()
+    cur.execute("""
+-- migrations (safe to run repeatedly)
+ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_name TEXT;
+ALTER TABLE price_history ADD COLUMN IF NOT EXISTS product_url TEXT;
+""")
+            conn.commit()
     conn.close()
 
 
@@ -559,72 +540,11 @@ def get_marketing_deals(exclude_asins, limit=5):
 
 
 # ---------------- Scraper ----------------
-
-
-def scrape_one_http(url_or_asin: str):
-    """Lightweight (no Playwright) scrape using requests+regex. Much lower RAM.
-    Returns same dict keys as scrape_one_amazon_sa, but may be less reliable if Amazon blocks."""
-    asin = extract_asin(url_or_asin)
-    url = url_or_asin
-    if asin and ("http://" not in url_or_asin and "https://" not in url_or_asin):
-        url = f"https://www.amazon.sa/dp/{asin}?language=en"
-
-    out = {
-        "timestamp": now_utc_str(),
-        "item_name": None,
-        "price_text": None,
-        "price_value": None,
-        "coupon_text": None,
-        "discount_percent": None,
-        "error": None,
-    }
-    try:
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-        }
-        r = requests.get(url, headers=headers, timeout=12)
-        html = r.text or ""
-
-        # Title
-        m = re.search(r'id="productTitle"[^>]*>(.*?)<', html, re.S | re.I)
-        if m:
-            title = re.sub(r"\s+", " ", m.group(1)).strip()
-            out["item_name"] = title or None
-
-        # Price (try multiple patterns)
-        price_text = None
-        price_patterns = [
-            r'class="a-offscreen"\s*>\s*([^<]{1,40})\s*<',
-        ]
-        for pat in price_patterns:
-            mm = re.search(pat, html, re.S | re.I)
-            if mm:
-                price_text = re.sub(r"\s+", " ", mm.group(1)).strip()
-                if price_text:
-                    break
-        if price_text:
-            out["price_text"] = price_text
-            out["price_value"] = parse_money_value(price_text)
-
-        # Coupon / promo text (best-effort)
-        cm = re.search(r'coupon[^<]{0,120}', html, re.I)
-        if cm:
-            coupon_text = re.sub(r"\s+", " ", cm.group(0)).strip()
-            out["coupon_text"] = coupon_text
-            out["discount_percent"] = max_percent_from_text(coupon_text)
-
-    except Exception as e:
-        out["error"] = str(e)
-
-    return out
-
-
 async def scrape_one_amazon_sa(url_or_asin):
-    """Scrape a single item. Best-effort and tolerant of blocks."""
+    """Scrape a single Amazon.sa product page (best-effort).
+    Tries hard to avoid sponsored/ad prices by restricting selectors to buybox/apex/core price blocks.
+    Returns dict with: item_name, price_text, price_value, seller_name, product_url, coupon_text, discount_percent, timestamp.
+    """
     asin = extract_asin(url_or_asin)
     url = url_or_asin
     if asin and ("http://" not in url_or_asin and "https://" not in url_or_asin):
@@ -635,84 +555,166 @@ async def scrape_one_amazon_sa(url_or_asin):
         "item_name": None,
         "price_text": None,
         "price_value": None,
+        "seller_name": None,
+        "product_url": None,
         "coupon_text": None,
         "discount_percent": None,
         "error": None,
     }
+
+    def clean(s): 
+        return (s or "").strip()
+
+    def extract_seller(txt):
+        t = " ".join(clean(txt).split())
+        if not t:
+            return None
+        m = re.search(r"Sold by\s+([^\n\.]+)", t, re.I)
+        if m:
+            return m.group(1).strip()
+        # "Ships from Amazon.sa" style
+        if "amazon.sa" in t.lower() and ("sold by" in t.lower() or "ships from" in t.lower()):
+            return "Amazon.sa"
+        return None
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-setuid-sandbox",
+                    "--disable-gpu",
+                ],
+            )
             context = await browser.new_context(
                 user_agent=USER_AGENT,
-                viewport={"width": 1200, "height": 800},
+                viewport={"width": 1280, "height": 900},
                 locale="en-US",
             )
             page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            await page.wait_for_timeout(650)
+            await page.wait_for_timeout(800)
+
+            out["product_url"] = page.url
+
+            # snapshot of page text for quick checks
+            page_text = ""
+            try:
+                page_text = (await page.locator("body").inner_text(timeout=2500))[:6000]
+            except Exception:
+                page_text = ""
+
+            unavailable = False
+            try:
+                avail = clean(await page.locator("#availability").first.inner_text(timeout=1200))
+                if avail and "currently unavailable" in avail.lower():
+                    unavailable = True
+            except Exception:
+                pass
+            if not unavailable and "currently unavailable" in page_text.lower():
+                unavailable = True
+
+            third_party_only = ("only available from third-party sellers" in page_text.lower())
 
             # Title
             title = None
             try:
-                title = await page.locator("#productTitle").first.inner_text(timeout=4000)
-                title = title.strip()
+                title = clean(await page.locator("#productTitle").first.inner_text(timeout=2500))
             except Exception:
                 title = None
+            if not title:
+                try:
+                    title = clean(await page.locator("meta[property='og:title']").first.get_attribute("content", timeout=1500))
+                except Exception:
+                    title = None
+
+            # Seller
+            seller_name = None
+            try:
+                merchant = clean(await page.locator("#merchant-info").first.inner_text(timeout=1800))
+                seller_name = extract_seller(merchant) or seller_name
+            except Exception:
+                pass
+            if not seller_name:
+                try:
+                    buybox_txt = clean(await page.locator("#tabular-buybox").first.inner_text(timeout=1600))
+                    seller_name = extract_seller(buybox_txt) or seller_name
+                except Exception:
+                    pass
 
             # Price
             price_text = None
-            price_value = None
-            price_selectors = [
-                "#corePriceDisplay_desktop_feature_div span.a-price span.a-offscreen",
-                "#corePrice_feature_div span.a-price span.a-offscreen",
-                "span.a-price span.a-offscreen",
-                "#priceblock_ourprice",
-                "#priceblock_dealprice",
-                "#priceblock_saleprice",
-            ]
-            for sel in price_selectors:
-                try:
-                    price_text = await page.locator(sel).first.inner_text(timeout=2500)
-                    price_text = price_text.strip()
-                    if price_text:
-                        break
-                except Exception:
-                    continue
+            if not unavailable:
+                # restrict selectors to main price blocks to avoid ads/sponsored modules
+                selectors = [
+                    "#corePriceDisplay_desktop_feature_div span.a-price span.a-offscreen",
+                    "#corePrice_feature_div span.a-price span.a-offscreen",
+                    "#apex_desktop span.a-price span.a-offscreen",
+                    "#apex_offerDisplay_desktop span.a-price span.a-offscreen",
+                    "#buybox span.a-price span.a-offscreen",
+                    "#newBuyBoxPrice span.a-price span.a-offscreen",
+                    "#priceblock_ourprice",
+                    "#priceblock_dealprice",
+                    "#priceblock_saleprice",
+                ]
+                for sel in selectors:
+                    try:
+                        t = clean(await page.locator(sel).first.inner_text(timeout=2000))
+                        if t and re.search(r"\d", t):
+                            price_text = t
+                            break
+                    except Exception:
+                        continue
 
-            if price_text:
-                price_value = parse_money_value(price_text)
+                # third party only: read "options from SAR xx" inside buybox/apex
+                if not price_text and third_party_only:
+                    candidates = [
+                        "#buybox",
+                        "#apex_desktop",
+                        "#corePriceDisplay_desktop_feature_div",
+                        "#buybox_feature_div",
+                    ]
+                    for sel in candidates:
+                        try:
+                            t = clean(await page.locator(sel).first.inner_text(timeout=1600))
+                            m = re.search(r"(SAR\s*[0-9][0-9\.,]*)", t)
+                            if m:
+                                price_text = m.group(1).replace("  ", " ").strip()
+                                break
+                        except Exception:
+                            continue
 
-            # Coupon / promo text
+            price_value = parse_money_value(price_text) if price_text else None
+
+            # Coupon/promo
             coupon_text = None
-            coupon_candidates = [
-                "label[id*='coupon']",
-                "#couponBadge",
-                "#vpcButton .a-color-success",
+            coupon_selectors = [
                 "#promoPriceBlockMessage_feature_div",
                 ".promoPriceBlockMessage",
                 "#promotions_feature_div",
+                "label[id*='coupon']",
+                "#couponBadge",
+                "#vpcButton .a-color-success",
             ]
-            for sel in coupon_candidates:
+            for sel in coupon_selectors:
                 try:
-                    t = await page.locator(sel).first.inner_text(timeout=1500)
-                    t = (t or "").strip()
+                    t = clean(await page.locator(sel).first.inner_text(timeout=1200))
                     if t and ("coupon" in t.lower() or "%" in t or "save" in t.lower() or "off" in t.lower()):
                         coupon_text = t
                         break
                 except Exception:
                     continue
 
-            discount_percent = None
-            # Prefer percent from coupon_text
-            if coupon_text:
-                discount_percent = max_percent_from_text(coupon_text)
+            discount_percent = max_percent_from_text(coupon_text) if coupon_text else None
 
             out.update(
                 {
                     "item_name": title,
                     "price_text": price_text,
                     "price_value": price_value,
+                    "seller_name": seller_name,
                     "coupon_text": coupon_text,
                     "discount_percent": discount_percent,
                 }
@@ -725,6 +727,7 @@ async def scrape_one_amazon_sa(url_or_asin):
         out["error"] = str(e)
 
     return out
+
 
 
 def run_async(coro_fn, *args, **kwargs):
@@ -809,15 +812,10 @@ def write_history(item_id, data):
     if insert:
         cur.execute(
             """
-            INSERT INTO price_history (item_id, ts, item_name, seller_text, availability_text, price_text, price_value, coupon_text, discount_percent, error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            INSERT INTO price_history (item_id, ts, item_name, price_text, price_value, seller_name, product_url, coupon_text, discount_percent, error)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (
-                item_id,
-                data.get("timestamp"),
-                data.get("item_name"),
-                data.get("price_text"),
-                data.get("price_value"),
-                data.get("coupon_text"),
+            (item_id, data.get("timestamp"), data.get("item_name"), data.get("price_text"), data.get("price_value"), data.get("seller_name"), data.get("product_url"), data.get("coupon_text"),
                 data.get("discount_percent"),
                 data.get("error"),
             ),
@@ -1004,6 +1002,8 @@ def index():
                 title = (trow.get("item_name") or "").strip() or None
         it["latest_name"] = title
         it["latest_price_text"] = latest.get("price_text") if latest else None
+        it["latest_seller"] = latest.get("seller_name") if latest else None
+        it["latest_product_url"] = latest.get("product_url") if latest else None
         it["coupon_text"] = latest.get("coupon_text") if latest else None
         enriched.append(it)
 
@@ -1184,10 +1184,11 @@ def add():
     row = cur.fetchone()
     conn.close()
 
-    # Background scrape (do NOT block the request; avoids gunicorn worker timeout/OOM)
+    # First scrape
     if row:
         try:
-            SCRAPE_EXECUTOR.submit(_safe_background_scrape_and_write, int(row["id"]), url)
+            data = run_async(scrape_one_amazon_sa, url)
+            write_history(row["id"], data)
         except Exception:
             pass
 
@@ -1288,7 +1289,7 @@ def history_json(asin):
         return jsonify([])
 
     cur.execute(
-        "SELECT ts, price_value, seller_text, availability_text FROM price_history WHERE item_id=%s AND price_value IS NOT NULL AND price_value > 0 ORDER BY ts ASC",
+        "SELECT ts, price_value FROM price_history WHERE item_id=%s AND price_value IS NOT NULL AND price_value > 0 ORDER BY ts ASC",
         (it["id"],),
     )
     rows = cur.fetchall()
