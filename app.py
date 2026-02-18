@@ -157,6 +157,10 @@ def ensure_schema():
             discount_percent NUMERIC,
             error TEXT
         );
+            # migrations (safe to run repeatedly)
+            cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_text TEXT")
+            cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS availability_text TEXT")
+
         """
     )
 
@@ -805,8 +809,7 @@ def write_history(item_id, data):
     if insert:
         cur.execute(
             """
-            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, error)
-            VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO price_history (item_id, ts, item_name, seller_text, availability_text, price_text, price_value, coupon_text, discount_percent, error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 item_id,
@@ -1285,7 +1288,7 @@ def history_json(asin):
         return jsonify([])
 
     cur.execute(
-        "SELECT ts, price_value FROM price_history WHERE item_id=%s AND price_value IS NOT NULL AND price_value > 0 ORDER BY ts ASC",
+        "SELECT ts, price_value, seller_text, availability_text FROM price_history WHERE item_id=%s AND price_value IS NOT NULL AND price_value > 0 ORDER BY ts ASC",
         (it["id"],),
     )
     rows = cur.fetchall()
