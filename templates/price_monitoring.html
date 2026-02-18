@@ -159,32 +159,6 @@
         background: rgba(218,174,81,0.12);
     }
 
-    .actions{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      flex-wrap:wrap;
-      margin-top: 14px;
-    }
-    .btn-small{
-      padding: 10px 14px;
-      border-radius: 14px;
-      font-weight: 900;
-      font-size: .95rem;
-      line-height:1;
-      display:inline-block;
-    }
-    .btn-del{
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.20);
-      color: rgba(255,90,90,0.95);
-      cursor:pointer;
-    }
-    .btn-del:hover{
-      background: rgba(255,90,90,0.10);
-      border-color: rgba(255,90,90,0.22);
-    }
-
     .meta{
         color: rgba(255,255,255,0.72);
         font-weight: 700;
@@ -226,7 +200,12 @@
         .header{ flex-direction:column; align-items:stretch; }
         .top-actions{ justify-content:flex-start; }
     }
-  </style>
+  
+  .seller{margin-top:6px;color:rgba(255,255,255,0.72);font-weight:700;font-size:0.9rem}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .btn-row .btn-glow{flex:1}
+  .btn-danger{background:rgba(255,80,80,0.16);border:1px solid rgba(255,80,80,0.35);color:#ffb3b3;padding:12px 14px;border-radius:14px;font-weight:900;cursor:pointer}
+</style>
 </head>
 <body>
 
@@ -266,7 +245,8 @@
           <div class="card">
             <div class="row" style="gap: 12px;">
               <div style="min-width:0; flex:1;">
-                <div class="title" title="{{ it.name }}">{{ it.name }}</div>
+                <div class="title" title="{{ it.name }}
+              {% if it.seller_name %}<div class=\"seller\">Sold by: {{ it.seller_name }}</div>{% endif %}">{{ it.name }}</div>
                 <div class="meta" style="margin-top:6px;">
                   Current price: <strong>{{ it.current_price_text }}</strong>
                 </div>
@@ -289,25 +269,18 @@
                 {% endif %}
               </div>
 
-              <a class="btn-glow" href="{{ it.url }}" target="_blank" rel="noopener">Open product</a>
+              <div class="btn-row">
+              <a class="btn-glow" href="{{ it.url }}" target="_blank" rel="noopener">Open</a>
+              <form method="POST" action="{{ url_for('delete', asin=it.asin) }}" style="margin:0">
+                <button type="submit" class="btn-danger price-monitoring-delete" onclick="return confirm('Delete this item?')">Delete</button>
+              </form>
+            </div>
             </div>
           </div>
         {% endfor %}
       </div>
     {% endif %}
   </div>
-
-
-<script>
-  (function(){
-    document.querySelectorAll('.js-local-dt').forEach(el => {
-      const v = el.getAttribute('data-utc') || '';
-      const dt = new Date(v);
-      if (isNaN(dt.getTime())) return;
-      el.textContent = dt.toLocaleString();
-    });
-  })();
-</script>
 
 </body>
 </html>
