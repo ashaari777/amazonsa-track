@@ -177,9 +177,7 @@
         text-overflow:ellipsis;
         max-width:100%;
     }
-    
-    .seller-row{color: rgba(255,255,255,0.65); font-size: 0.92rem; margin: 4px 0 10px 0;}
-.meta-row{
+    .meta-row{
         display:flex;
         justify-content:space-between;
         gap:10px;
@@ -620,6 +618,10 @@
                   {{ it.latest_name if it.latest_name else it.asin }}
                 </div>
 
+                <div class="seller-line" style="margin-top:6px; color: rgba(255,255,255,0.65); font-weight:700; font-size:0.92rem;">
+                  {{ it.latest_seller if it.latest_seller else "" }}
+                </div>
+
                 <div class="meta-row">
                   <div class="pills">
                     <div class="pill"><strong id="cur-{{ it.asin }}">--</strong></div>
@@ -684,24 +686,7 @@
 
     const ctx = canvas.getContext('2d');
 
-    
-    const latest = (points || []).slice(-1)[0];
-    const sellerEl = document.getElementById(`seller-${asin}`);
-    if (sellerEl) {
-      if (!latest) {
-        sellerEl.textContent = "—";
-      } else if (latest.availability_text === "unavailable") {
-        sellerEl.textContent = "Currently unavailable";
-      } else if (latest.seller_text) {
-        sellerEl.textContent = latest.seller_text;
-      } else if (latest.availability_text === "third_party_only") {
-        sellerEl.textContent = "Third-party sellers";
-      } else {
-        sellerEl.textContent = "—";
-      }
-    }
-
-const raw = (points || []).filter(p => p.price_value > 0);
+    const raw = (points || []).filter(p => p.price_value > 0);
     if (raw.length === 0) return;
 
     // Downsample chart points to ~1 record per hour (keeps the first point, then >=60min)
