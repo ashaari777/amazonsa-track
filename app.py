@@ -6,7 +6,6 @@ import base64
 import hashlib
 import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor
 import random
 import requests
 
@@ -45,25 +44,6 @@ USER_AGENT = (
     "Chrome/144.0.0.0 Safari/537.36"
 )
 
-# --- Background scrape executor (prevents request-time Playwright crashes / timeouts) ---
-SCRAPE_EXECUTOR = ThreadPoolExecutor(max_workers=1)
-_SCRAPE_LOCK = threading.Lock()
-
-def _safe_background_scrape_and_write(item_id: int, url: str):
-    """Run scrape in background, one-at-a-time, best-effort.
-    Strategy: try lightweight HTTP scrape first (low RAM). If it fails to get a price, fallback to Playwright."""
-    try:
-        with _SCRAPE_LOCK:
-            data = scrape_one_http(url)
-            if not data or (data.get("price_value") or 0) <= 0:
-                data = run_async(scrape_one_amazon_sa, url)
-
-            if data and (data.get("price_value") or 0) > 0:
-                write_history(item_id, data)
-    except Exception:
-        pass
-
-
 app = Flask(__name__)
 app.secret_key = APP_SECRET
 
@@ -77,38 +57,30 @@ def db_conn():
 
 
 def ensure_schema():
+    """Create tables and run safe migrations (idempotent)."""
     conn = db_conn()
     cur = conn.cursor()
 
+    # Core tables
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'user',
-            is_approved BOOLEAN NOT NULL DEFAULT FALSE,
-            is_paused BOOLEAN NOT NULL DEFAULT FALSE,
-            created_at TEXT NOT NULL DEFAULT (to_char(now() at time zone 'utc','YYYY-MM-DD HH24:MI:SS')),
-            last_login_at TEXT,
-            login_count INTEGER NOT NULL DEFAULT 0,
-            ip_address TEXT,
-            device_name TEXT,
-            location TEXT
+            role TEXT DEFAULT 'user'
         );
         """
     )
 
-    # Backward compatible migrations (in case the DB existed before these columns)
-    try:
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INTEGER NOT NULL DEFAULT 0")
-    except Exception:
-        conn.rollback()
-
-    try:
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT")
-    except Exception:
-        conn.rollback()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_settings (
+            k TEXT PRIMARY KEY,
+            value TEXT
+        );
+        """
+    )
 
     cur.execute(
         """
@@ -116,75 +88,41 @@ def ensure_schema():
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             asin TEXT NOT NULL,
-            url TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (to_char(now() at time zone 'utc','YYYY-MM-DD HH24:MI:SS')),
             target_price_value NUMERIC,
-            UNIQUE(user_id, asin)
-        );
-        """
-    )
-
-    # ---- Migration safety: older DBs might have UNIQUE(asin) or UNIQUE(url) constraints
-    # which would prevent different users from adding the same ASIN.
-    try:
-        cur.execute(
-            """
-            SELECT conname, pg_get_constraintdef(oid) AS def
-            FROM pg_constraint
-            WHERE conrelid = 'items'::regclass AND contype = 'u';
-            """
-        )
-        for row in cur.fetchall() or []:
-            conname = row.get("conname")
-            cdef = (row.get("def") or "").lower()
-            # Drop unique constraints that are not the intended (user_id, asin)
-            if "unique" in cdef and "(user_id, asin)" not in cdef:
-                if "(asin)" in cdef or "(url)" in cdef or "(asin, url)" in cdef:
-                    cur.execute(f'ALTER TABLE items DROP CONSTRAINT IF EXISTS "{conname}"')
-    except Exception:
-        conn.rollback()
-
-    cur.execute(
-    """
-    CREATE TABLE IF NOT EXISTS price_history (
-        id SERIAL PRIMARY KEY,
-        item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-        ts TEXT NOT NULL,
-        item_name TEXT,
-        price_text TEXT,
-        price_value NUMERIC,
-        coupon_text TEXT,
-        discount_percent NUMERIC,
-        error TEXT,
-        seller_text TEXT,
-        availability_text TEXT
-    );
-    """
-)
-
-# migrations (safe to run repeatedly)
-try:
-    cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_text TEXT")
-except Exception:
-    conn.rollback()
-try:
-    cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS availability_text TEXT")
-except Exception:
-    conn.rollback()
-
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS system_settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
+            created_at TEXT DEFAULT (to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
         );
         """
     )
 
     cur.execute(
         """
-        CREATE TABLE IF NOT EXISTS target_notifications (
+        CREATE TABLE IF NOT EXISTS price_history (
+            id SERIAL PRIMARY KEY,
+            asin TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            price_value NUMERIC,
+            price_text TEXT,
+            title TEXT,
+            coupon_text TEXT
+        );
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS telegram_subscriptions (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            chat_id TEXT,
+            token TEXT UNIQUE NOT NULL,
+            created_at TEXT DEFAULT (to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+        );
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
             id SERIAL PRIMARY KEY,
             item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
             notified_at TEXT NOT NULL,
@@ -193,7 +131,19 @@ except Exception:
         """
     )
 
+    # ---- Safe migrations (run repeatedly) ----
+    cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_text TEXT")
+    cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_name TEXT")
+    cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS availability_text TEXT")
+    cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS source_hint TEXT")
+
+    # Helpful indexes
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_items_user ON items(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_items_asin ON items(asin)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_history_asin_ts ON price_history(asin, ts)")
+
     conn.commit()
+    cur.close()
     conn.close()
 
 
@@ -331,7 +281,7 @@ def get_location_from_ip(ip):
 def parse_money_value(t):
     if not t:
         return None
-    m = re.search(r"([\d,]+(?:\.[\d]+)?)", t.replace("٫", "."))
+    m = re.search(r"([\d,]+(?:\.[\d]+)?)", t.replace("Ù«", "."))
     if not m:
         return None
     try:
@@ -373,19 +323,19 @@ def send_telegram_alert(chat_id, item_data):
     savings_percent = (savings / target_price * 100) if target_price and target_price > 0 else 0
     
     # Urgent notification message
-    message = f"""🚨 *PRICE DROP ALERT!* 🚨
+    message = f"""ð¨ *PRICE DROP ALERT!* ð¨
 
 {item_name}
 _Just hit your target price!_
 
-💰 *NOW: {current_price}*
-🎯 Target: SAR {target_price:.2f}
-💵 *YOU SAVE: {savings:.2f} SAR ({savings_percent:.1f}%)*
+ð° *NOW: {current_price}*
+ð¯ Target: SAR {target_price:.2f}
+ðµ *YOU SAVE: {savings:.2f} SAR ({savings_percent:.1f}%)*
 
-⏰ _Prices may change anytime!_
-🛒 Grab it NOW: {url}
+â° _Prices may change anytime!_
+ð Grab it NOW: {url}
 
-🦅 *PriceHawk Alert*
+ð¦ *PriceHawk Alert*
 """
     
     try:
@@ -568,69 +518,6 @@ def get_marketing_deals(exclude_asins, limit=5):
 
 
 # ---------------- Scraper ----------------
-
-
-def scrape_one_http(url_or_asin: str):
-    """Lightweight (no Playwright) scrape using requests+regex. Much lower RAM.
-    Returns same dict keys as scrape_one_amazon_sa, but may be less reliable if Amazon blocks."""
-    asin = extract_asin(url_or_asin)
-    url = url_or_asin
-    if asin and ("http://" not in url_or_asin and "https://" not in url_or_asin):
-        url = f"https://www.amazon.sa/dp/{asin}?language=en"
-
-    out = {
-        "timestamp": now_utc_str(),
-        "item_name": None,
-        "price_text": None,
-        "price_value": None,
-        "coupon_text": None,
-        "discount_percent": None,
-        "error": None,
-    }
-    try:
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-        }
-        r = requests.get(url, headers=headers, timeout=12)
-        html = r.text or ""
-
-        # Title
-        m = re.search(r'id="productTitle"[^>]*>(.*?)<', html, re.S | re.I)
-        if m:
-            title = re.sub(r"\s+", " ", m.group(1)).strip()
-            out["item_name"] = title or None
-
-        # Price (try multiple patterns)
-        price_text = None
-        price_patterns = [
-            r'class="a-offscreen"\s*>\s*([^<]{1,40})\s*<',
-        ]
-        for pat in price_patterns:
-            mm = re.search(pat, html, re.S | re.I)
-            if mm:
-                price_text = re.sub(r"\s+", " ", mm.group(1)).strip()
-                if price_text:
-                    break
-        if price_text:
-            out["price_text"] = price_text
-            out["price_value"] = parse_money_value(price_text)
-
-        # Coupon / promo text (best-effort)
-        cm = re.search(r'coupon[^<]{0,120}', html, re.I)
-        if cm:
-            coupon_text = re.sub(r"\s+", " ", cm.group(0)).strip()
-            out["coupon_text"] = coupon_text
-            out["discount_percent"] = max_percent_from_text(coupon_text)
-
-    except Exception as e:
-        out["error"] = str(e)
-
-    return out
-
 
 async def scrape_one_amazon_sa(url_or_asin):
     """Scrape a single item. Best-effort and tolerant of blocks."""
@@ -818,7 +705,8 @@ def write_history(item_id, data):
     if insert:
         cur.execute(
             """
-            INSERT INTO price_history (item_id, ts, item_name, seller_text, availability_text, price_text, price_value, coupon_text, discount_percent, error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, error)
+            VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 item_id,
@@ -1105,9 +993,9 @@ def price_monitoring():
                 price_text = "SAR --"
 
         reached_at = r.get("reached_at")
-        status = "Still watching 🦅"
+        status = "Still watching ð¦"
         if reached_at:
-            status = "Congrats 🎯"
+            status = "Congrats ð¯"
 
         try:
             target_val = float(r.get("target_price_value")) if r.get("target_price_value") is not None else None
@@ -1167,7 +1055,7 @@ def add():
     cur = conn.cursor()
     uid = session.get("user_id")
 
-    # ✅ Explicit duplicate check (prevents false 'already in your list' on other DB errors)
+    # â Explicit duplicate check (prevents false 'already in your list' on other DB errors)
     cur.execute("SELECT 1 FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
     if cur.fetchone():
         conn.close()
@@ -1193,10 +1081,11 @@ def add():
     row = cur.fetchone()
     conn.close()
 
-    # Background scrape (do NOT block the request; avoids gunicorn worker timeout/OOM)
+    # First scrape
     if row:
         try:
-            SCRAPE_EXECUTOR.submit(_safe_background_scrape_and_write, int(row["id"]), url)
+            data = run_async(scrape_one_amazon_sa, url)
+            write_history(row["id"], data)
         except Exception:
             pass
 
@@ -1297,7 +1186,7 @@ def history_json(asin):
         return jsonify([])
 
     cur.execute(
-        "SELECT ts, price_value, seller_text, availability_text FROM price_history WHERE item_id=%s AND price_value IS NOT NULL AND price_value > 0 ORDER BY ts ASC",
+        "SELECT ts, price_value FROM price_history WHERE item_id=%s AND price_value IS NOT NULL AND price_value > 0 ORDER BY ts ASC",
         (it["id"],),
     )
     rows = cur.fetchall()
@@ -1795,7 +1684,7 @@ def telegram_webhook():
                                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
                                 json={
                                     "chat_id": chat_id,
-                                    "text": "🦅 *PriceHawk Connected!*\n\nYou'll now receive instant alerts when your tracked items hit target prices.\n\n_Go add items and set target prices on your dashboard_",
+                                    "text": "ð¦ *PriceHawk Connected!*\n\nYou'll now receive instant alerts when your tracked items hit target prices.\n\n_Go add items and set target prices on your dashboard_",
                                     "parse_mode": "Markdown"
                                 }
                             )
