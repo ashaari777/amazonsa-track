@@ -6,6 +6,7 @@ import base64
 import hashlib
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import random
 import requests
 
@@ -43,6 +44,25 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/144.0.0.0 Safari/537.36"
 )
+
+# --- Background scrape executor (prevents request-time Playwright crashes / timeouts) ---
+SCRAPE_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+_SCRAPE_LOCK = threading.Lock()
+
+def _safe_background_scrape_and_write(item_id: int, url: str):
+    """Run scrape in background, one-at-a-time, best-effort.
+    Strategy: try lightweight HTTP scrape first (low RAM). If it fails to get a price, fallback to Playwright."""
+    try:
+        with _SCRAPE_LOCK:
+            data = scrape_one_http(url)
+            if not data or (data.get("price_value") or 0) <= 0:
+                data = run_async(scrape_one_amazon_sa, url)
+
+            if data and (data.get("price_value") or 0) > 0:
+                write_history(item_id, data)
+    except Exception:
+        pass
+
 
 app = Flask(__name__)
 app.secret_key = APP_SECRET
@@ -135,7 +155,6 @@ def ensure_schema():
             price_value NUMERIC,
             coupon_text TEXT,
             discount_percent NUMERIC,
-            seller_name TEXT,
             error TEXT
         );
         """
@@ -537,6 +556,69 @@ def get_marketing_deals(exclude_asins, limit=5):
 
 # ---------------- Scraper ----------------
 
+
+def scrape_one_http(url_or_asin: str):
+    """Lightweight (no Playwright) scrape using requests+regex. Much lower RAM.
+    Returns same dict keys as scrape_one_amazon_sa, but may be less reliable if Amazon blocks."""
+    asin = extract_asin(url_or_asin)
+    url = url_or_asin
+    if asin and ("http://" not in url_or_asin and "https://" not in url_or_asin):
+        url = f"https://www.amazon.sa/dp/{asin}?language=en"
+
+    out = {
+        "timestamp": now_utc_str(),
+        "item_name": None,
+        "price_text": None,
+        "price_value": None,
+        "coupon_text": None,
+        "discount_percent": None,
+        "error": None,
+    }
+    try:
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
+        r = requests.get(url, headers=headers, timeout=12)
+        html = r.text or ""
+
+        # Title
+        m = re.search(r'id="productTitle"[^>]*>(.*?)<', html, re.S | re.I)
+        if m:
+            title = re.sub(r"\s+", " ", m.group(1)).strip()
+            out["item_name"] = title or None
+
+        # Price (try multiple patterns)
+        price_text = None
+        price_patterns = [
+            r'class="a-offscreen"\s*>\s*([^<]{1,40})\s*<',
+        ]
+        for pat in price_patterns:
+            mm = re.search(pat, html, re.S | re.I)
+            if mm:
+                price_text = re.sub(r"\s+", " ", mm.group(1)).strip()
+                if price_text:
+                    break
+        if price_text:
+            out["price_text"] = price_text
+            out["price_value"] = parse_money_value(price_text)
+
+        # Coupon / promo text (best-effort)
+        cm = re.search(r'coupon[^<]{0,120}', html, re.I)
+        if cm:
+            coupon_text = re.sub(r"\s+", " ", cm.group(0)).strip()
+            out["coupon_text"] = coupon_text
+            out["discount_percent"] = max_percent_from_text(coupon_text)
+
+    except Exception as e:
+        out["error"] = str(e)
+
+    return out
+
+
 async def scrape_one_amazon_sa(url_or_asin):
     """Scrape a single item. Best-effort and tolerant of blocks."""
     asin = extract_asin(url_or_asin)
@@ -551,7 +633,6 @@ async def scrape_one_amazon_sa(url_or_asin):
         "price_value": None,
         "coupon_text": None,
         "discount_percent": None,
-        "seller_name": None,
         "error": None,
     }
 
@@ -566,86 +647,32 @@ async def scrape_one_amazon_sa(url_or_asin):
             page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(650)
-            # Main content root (avoid picking sponsored/ad prices)
-            root = page.locator("#ppd")
-            try:
-                if await root.count() == 0:
-                    root = page.locator("#centerCol")
-            except Exception:
-                root = page.locator("#centerCol")
 
-            # Title (prefer real product title; fall back to og:title)
+            # Title
             title = None
             try:
-                title = await root.locator("#productTitle").first.inner_text(timeout=4000)
-                title = (title or "").strip()
+                title = await page.locator("#productTitle").first.inner_text(timeout=4000)
+                title = title.strip()
             except Exception:
                 title = None
-            if not title:
-                try:
-                    title = await page.locator("meta[property='og:title']").first.get_attribute("content", timeout=2000)
-                    title = (title or "").strip()
-                except Exception:
-                    title = None
 
-            # Seller / merchant name (best effort)
-            seller_name = None
-            seller_selectors = [
-                "#merchant-info",
-                "#tabular-buybox .tabular-buybox-text span",
-                "#sellerProfileTriggerId",
-                "a#sellerProfileTriggerId",
-                "#bylineInfo",
-            ]
-            for sel in seller_selectors:
-                try:
-                    t = await root.locator(sel).first.inner_text(timeout=1500)
-                    t = (t or "").strip()
-                    if t:
-                        seller_name = t
-                        break
-                except Exception:
-                    continue
-            # Clean merchant-info text to something short
-            if seller_name and "sold by" in seller_name.lower():
-                # keep part after 'Sold by'
-                try:
-                    low = seller_name.lower()
-                    idx = low.find("sold by")
-                    seller_name = seller_name[idx+len("sold by"):].strip(" :.-\n\t")
-                except Exception:
-                    pass
-
-            # Price (STRICT: only from main buybox/price blocks, not generic a-price)
+            # Price
             price_text = None
             price_value = None
             price_selectors = [
                 "#corePriceDisplay_desktop_feature_div span.a-price span.a-offscreen",
                 "#corePrice_feature_div span.a-price span.a-offscreen",
-                "#apex_desktop span.a-price span.a-offscreen",
-                "#apex_desktop_newAccordionRow span.a-price span.a-offscreen",
+                "span.a-price span.a-offscreen",
                 "#priceblock_ourprice",
                 "#priceblock_dealprice",
                 "#priceblock_saleprice",
-                "#newBuyBoxPrice span.a-price span.a-offscreen",
-                "#tp_price_block_total_price_ww span.a-price span.a-offscreen",
-                # Sometimes only "from SAR XXX"
-                "#corePriceDisplay_desktop_feature_div span.a-price-whole",
             ]
             for sel in price_selectors:
                 try:
-                    loc = root.locator(sel).first
-                    if await loc.count() == 0:
-                        continue
-                    t = await loc.inner_text(timeout=2500)
-                    t = (t or "").strip()
-                    if not t:
-                        continue
-                    # If we matched the whole part only, rebuild a price-ish string
-                    if sel.endswith("span.a-price-whole") and t.isdigit():
-                        t = f"SAR {t}"
-                    price_text = t
-                    break
+                    price_text = await page.locator(sel).first.inner_text(timeout=2500)
+                    price_text = price_text.strip()
+                    if price_text:
+                        break
                 except Exception:
                     continue
 
@@ -684,7 +711,6 @@ async def scrape_one_amazon_sa(url_or_asin):
                     "price_value": price_value,
                     "coupon_text": coupon_text,
                     "discount_percent": discount_percent,
-                    "seller_name": seller_name,
                 }
             )
 
@@ -747,10 +773,6 @@ def write_history(item_id, data):
     if (not data.get("item_name")) and latest and latest.get("item_name"):
         data["item_name"] = latest.get("item_name")
 
-    # Keep the last known seller if the current scrape missed it
-    if (not data.get("seller_name")) and latest and latest.get("seller_name"):
-        data["seller_name"] = latest.get("seller_name")
-
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
         interval_sec = int(interval_str)
@@ -783,7 +805,7 @@ def write_history(item_id, data):
     if insert:
         cur.execute(
             """
-            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, seller_name, error)
+            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, error)
             VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
@@ -978,7 +1000,6 @@ def index():
             if trow and trow.get("item_name"):
                 title = (trow.get("item_name") or "").strip() or None
         it["latest_name"] = title
-        it["latest_seller"] = latest.get("seller_name") if latest else None
         it["latest_price_text"] = latest.get("price_text") if latest else None
         it["coupon_text"] = latest.get("coupon_text") if latest else None
         enriched.append(it)
@@ -1033,13 +1054,12 @@ def price_monitoring():
             i.target_price_value,
             ph.item_name,
             ph.price_text,
-            ph.seller_name,
             ph.price_value,
             ph.ts AS last_price_ts,
             tn.reached_at
         FROM items i
         LEFT JOIN LATERAL (
-            SELECT item_name, price_text, seller_name, price_value, ts
+            SELECT item_name, price_text, price_value, ts
             FROM price_history
             WHERE item_id = i.id
             ORDER BY ts DESC
@@ -1161,11 +1181,10 @@ def add():
     row = cur.fetchone()
     conn.close()
 
-    # First scrape
+    # Background scrape (do NOT block the request; avoids gunicorn worker timeout/OOM)
     if row:
         try:
-            data = run_async(scrape_one_amazon_sa, url)
-            write_history(row["id"], data)
+            SCRAPE_EXECUTOR.submit(_safe_background_scrape_and_write, int(row["id"]), url)
         except Exception:
             pass
 
