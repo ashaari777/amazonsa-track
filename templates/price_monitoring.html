@@ -3,85 +3,273 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Price monitoring • PriceHawk</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <title>PriceHawk • Price monitoring</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
     :root{
-      --bg:#0f0c29;
-      --card: rgba(30,30,50,0.55);
-      --border: rgba(255,255,255,0.10);
-      --text: rgba(255,255,255,0.95);
-      --muted: rgba(255,255,255,0.65);
-      --good:#2ee59d;
-      --warn:#ffcc66;
-      --bad:#ff5a7a;
+        --bg: #0f0c29;
+        --sidebar: #16162d;
+        --card-bg: rgba(30, 30, 50, 0.55);
+        --border: rgba(255,255,255,0.10);
+        --text: rgba(255,255,255,0.95);
+        --text-muted: rgba(255,255,255,0.65);
+        --accent: #d53369;
+        --gold: #daae51;
+        --green: #2ee59d;
+        --red: rgba(255,90,90,0.95);
     }
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:var(--text);min-height:100vh;padding:18px}
-    .top{max-width:980px;margin:0 auto 14px auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
-    .top h1{margin:0;font-size:20px;font-weight:900;letter-spacing:.2px}
-    .top a{color:var(--muted);text-decoration:none;font-weight:700}
-    .grid{max-width:980px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:14px;backdrop-filter: blur(10px)}
-    .name{font-weight:900;font-size:14px;line-height:1.25;max-height:3.2em;overflow:hidden}
-    .price{margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-    .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);padding:8px 10px;border-radius:999px;font-weight:900;font-size:13px}
-    .pill.good{border-color:rgba(46,229,157,0.35);color:var(--good)}
-    .pill.warn{border-color:rgba(255,204,102,0.35);color:var(--warn)}
-    .pill.bad{border-color:rgba(255,90,122,0.35);color:var(--bad)}
-    .btnrow{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
-    .btn{display:inline-flex;align-items:center;justify-content:center;border-radius:12px;padding:10px 12px;font-weight:900;font-size:13px;text-decoration:none;border:1px solid var(--border);color:var(--text);background:rgba(0,0,0,0.18);cursor:pointer}
-    .btn:hover{background:rgba(255,255,255,0.06)}
-    .btn.delete{border-color:rgba(255,90,122,0.35);color:var(--bad)}
-    .muted{color:var(--muted);font-size:12px;margin-top:8px}
-    form{margin:0}
+    *{ box-sizing:border-box; }
+    body{
+        font-family: 'Inter', sans-serif;
+        margin:0;
+        background: var(--bg);
+        color: var(--text);
+        display:flex;
+        min-height:100vh;
+    }
+
+    /* Sidebar */
+    .sidebar{
+        width: 250px;
+        background: var(--sidebar);
+        padding: 25px;
+        display:flex;
+        flex-direction:column;
+        gap:15px;
+        position: fixed;
+        top:0;
+        bottom:0;
+        left:0;
+    }
+    .user-email-top{ font-weight:700; color:#fff; margin-bottom: 8px; }
+    .nav-item{
+        padding: 12px 14px;
+        border-radius: 12px;
+        text-decoration:none;
+        color:#fff;
+        font-weight:600;
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        transition:0.2s;
+        background: transparent;
+        border: 0;
+        width: 100%;
+        cursor: pointer;
+        text-align:left;
+        font-family: inherit;
+        font-size: 1rem;
+    }
+    .nav-item:hover{ background: rgba(255,255,255,0.07); }
+    .nav-item.active{ background: rgba(218, 174, 81, 0.18); border:1px solid rgba(218, 174, 81, 0.35); }
+    .spacer{ flex:1; }
+
+    /* Main */
+    .main{ margin-left: 250px; flex: 1; padding: 30px 40px; width:100%; }
+
+    .header{
+        display:flex;
+        justify-content:space-between;
+        align-items:flex-start;
+        gap: 14px;
+        margin-bottom: 22px;
+    }
+    .header-left{ display:flex; flex-direction:column; gap:6px; }
+    h1{ font-size: 1.8rem; font-weight: 900; margin:0; }
+    .subtitle{ color: var(--text-muted); font-weight: 700; }
+
+    .top-actions{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+    .top-btn{
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(0,0,0,0.20);
+        color: #fff;
+        padding: 10px 14px;
+        border-radius: 14px;
+        cursor:pointer;
+        font-weight: 800;
+        font-family: inherit;
+        text-decoration:none;
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+    }
+
+    .grid{
+        display:grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 18px;
+    }
+
+    .card{
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 18px;
+        backdrop-filter: blur(10px);
+        display:flex;
+        flex-direction:column;
+        gap: 12px;
+    }
+
+    .title{
+        font-weight: 900;
+        font-size: 1rem;
+        line-height: 1.25;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin:0;
+    }
+
+    .row{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .price{
+        font-weight: 1000;
+        font-size: 1.25rem;
+        letter-spacing: .2px;
+    }
+
+    .pill{
+        font-size: .8rem;
+        font-weight: 900;
+        padding: 7px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(0,0,0,0.22);
+        color:#fff;
+        display:inline-flex;
+        align-items:center;
+        gap: 8px;
+        white-space: nowrap;
+    }
+    .pill-watch{
+        color: var(--green);
+        border-color: rgba(46,229,157,0.35);
+        background: rgba(46,229,157,0.10);
+    }
+    .pill-win{
+        color: rgba(255, 220, 170, 0.98);
+        border-color: rgba(218,174,81,0.45);
+        background: rgba(218,174,81,0.12);
+    }
+
+    .meta{
+        color: rgba(255,255,255,0.72);
+        font-weight: 700;
+        font-size: .9rem;
+        line-height: 1.35;
+    }
+    .meta strong{ color: rgba(255,255,255,0.92); }
+
+    .btn-glow{
+        padding: 10px 14px;
+        border-radius: 14px;
+        border: none;
+        cursor: pointer;
+        font-weight: 900;
+        font-size: .9rem;
+        color: #fff;
+        background: linear-gradient(135deg, #d53369, #daae51);
+        box-shadow: 0 10px 30px rgba(213,51,105,0.25);
+        text-decoration:none;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        white-space: nowrap;
+    }
+
+    .empty{
+        text-align:center;
+        padding: 45px 16px;
+        color: var(--text-muted);
+        background: rgba(0,0,0,0.18);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 18px;
+    }
+
+    /* Mobile */
+    @media (max-width: 900px){
+        .sidebar{ display:none; }
+        .main{ margin-left: 0; padding: 20px; }
+        .header{ flex-direction:column; align-items:stretch; }
+        .top-actions{ justify-content:flex-start; }
+    }
   </style>
 </head>
 <body>
-  <div class="top">
-    <h1>🦅 Price monitoring</h1>
-    <a href="{{ url_for('index') }}">← Back to Dashboard</a>
+
+  <div class="sidebar">
+    <div class="user-email-top">{{ user["email"] }}</div>
+    <a class="nav-item" href="{{ url_for('index') }}"><span>Dashboard</span></a>
+    <div class="nav-item active"><span>Price monitoring</span></div>
+    {% if is_admin %}
+      <a href="{{ url_for('admin_portal') }}" class="nav-item"><span>Admin</span></a>
+    {% endif %}
+    <div class="spacer"></div>
+    <form method="post" action="{{ url_for('logout') }}">
+      <button type="submit" class="nav-item">Logout</button>
+    </form>
   </div>
 
-  <div class="grid">
-    {% for it in items %}
-      <div class="card">
-        <div class="name">{{ it.name }}</div>
-
-        <div class="price">
-          <span class="pill">{{ it.current_price_text }}</span>
-          {% if it.status.startswith('Congrats') %}
-            <span class="pill good">{{ it.status }}</span>
-          {% else %}
-            <span class="pill warn">{{ it.status }}</span>
-          {% endif %}
-        </div>
-
-        {% if it.reached_at %}
-          <div class="muted">Target reached at: <span class="local-dt" data-iso="{{ it.reached_at.isoformat() if it.reached_at else '' }}"></span></div>
-        {% endif %}
-
-        <div class="btnrow">
-          <!-- Keep buttons order: Status | Open | Delete (Status is above as a pill) -->
-          <a class="btn" href="{{ it.url }}" target="_blank" rel="noopener">Open</a>
-
-          <form action="{{ url_for('delete', asin=it.asin) }}" method="POST" onsubmit="return confirm('Delete this item?');">
-            <button class="btn delete" type="submit">Delete</button>
-          </form>
-        </div>
+  <div class="main">
+    <div class="header">
+      <div class="header-left">
+        <h1>Price monitoring</h1>
+        <div class="subtitle">Your target-price watches, in one place.</div>
       </div>
-    {% endfor %}
+      <div class="top-actions">
+        <a class="top-btn" href="{{ url_for('telegram_setup') }}">Telegram setup</a>
+        <a class="top-btn" href="{{ url_for('index') }}">← Back</a>
+      </div>
+    </div>
+
+    {% if not items %}
+      <div class="empty">
+        <h2 style="margin:0 0 8px 0; font-weight:900; color: rgba(255,255,255,0.92);">No monitored items yet</h2>
+        <div style="margin:0;">Set a target price on any item, then come back here.</div>
+      </div>
+    {% else %}
+      <div class="grid">
+        {% for it in items %}
+          <div class="card">
+            <div class="row" style="gap: 12px;">
+              <div style="min-width:0; flex:1;">
+                <div class="title" title="{{ it.name }}">{{ it.name }}</div>
+                <div class="meta" style="margin-top:6px;">
+                  Current price: <strong>{{ it.current_price_text }}</strong>
+                </div>
+              </div>
+
+              {% if it.reached_at %}
+                <div class="pill pill-win">Congrats 🎯</div>
+              {% else %}
+                <div class="pill pill-watch">Still watching 🦅</div>
+              {% endif %}
+            </div>
+
+            <div class="row">
+              <div class="meta">
+                Target: <strong>{% if it.target_price_value is not none %}SAR {{ '%.2f'|format(it.target_price_value) }}{% else %}—{% endif %}</strong>
+                {% if it.reached_at %}
+                  <div style="margin-top:6px;">
+                    Reached at: <strong>{{ it.reached_at }}</strong> <span style="opacity:.75;">UTC</span>
+                  </div>
+                {% endif %}
+              </div>
+
+              <a class="btn-glow" href="{{ it.url }}" target="_blank" rel="noopener">Open product</a>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
   </div>
 
-  <script>
-    // Convert server ISO timestamps to local device time
-    document.querySelectorAll('.local-dt').forEach(el => {
-      const iso = el.getAttribute('data-iso');
-      if(!iso){ el.textContent=''; return; }
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) { el.textContent = iso; return; }
-      el.textContent = d.toLocaleString();
-    });
-  </script>
 </body>
 </html>
