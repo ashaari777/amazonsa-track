@@ -475,7 +475,10 @@
     .btn-outline:hover{
       transform: translateY(-1px);
     }
-  </style>
+  
+    .seller-line{margin-top:6px;color:rgba(255,255,255,0.72);font-size:0.85rem;font-weight:600}
+
+</style>
 </head>
 <body>
 
@@ -617,10 +620,9 @@
                 <div class="item-title" title="{{ it.latest_name if it.latest_name else it.asin }}">
                   {{ it.latest_name if it.latest_name else it.asin }}
                 </div>
-
-                <div class="seller-line" style="margin-top:6px; color: rgba(255,255,255,0.65); font-weight:700; font-size:0.92rem;">
-                  {{ it.latest_seller if it.latest_seller else "" }}
-                </div>
+                {% if it.latest_seller %}
+                <div class="seller-line">Sold by: {{ it.latest_seller }}</div>
+                {% endif %}
 
                 <div class="meta-row">
                   <div class="pills">
