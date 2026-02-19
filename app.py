@@ -368,6 +368,17 @@ def extract_seller_name_from_text(t):
     return None
 
 
+def is_seller_label_only_text(t):
+    low = clean_text(t).lower()
+    return low in {
+        "shipper / seller",
+        "ships from",
+        "sold by",
+        "seller",
+        "shipper",
+    }
+
+
 # ---------------- Telegram Notifications ----------------
 
 def send_telegram_alert(chat_id, item_data):
@@ -668,9 +679,10 @@ async def scrape_one_amazon_sa(url_or_asin):
                 "#merchantInfo #sellerProfileTriggerId",
                 "#merchantInfo a",
                 "#merchantInfo",
-                "#merchantInfoFeature_feature_div span",
-                "#fulfillerInfoFeature_feature_div span",
+                "#merchantInfoFeature_feature_div",
+                "#fulfillerInfoFeature_feature_div",
                 "#deliveryBlockMessage span.a-size-base.a-color-secondary",
+                "#deliveryBlockMessage",
                 "#tabular-buybox .tabular-buybox-text[tabular-attribute-name='Sold by'] a",
                 "#tabular-buybox .tabular-buybox-text[tabular-attribute-name='Sold by']",
                 "#newAccordionRow_1 #sellerProfileTriggerId",
@@ -680,6 +692,8 @@ async def scrape_one_amazon_sa(url_or_asin):
                     raw = await page.locator(sel).first.inner_text(timeout=1400)
                     raw = clean_text(raw)
                     if raw:
+                        if is_seller_label_only_text(raw):
+                            continue
                         seller_text = raw
                         break
                 except Exception:
@@ -689,6 +703,30 @@ async def scrape_one_amazon_sa(url_or_asin):
                 seller_name = extract_seller_name_from_text(seller_text)
                 if not seller_name:
                     seller_name = clean_text(re.sub(r"(?i)^sold by\s*[:\-]?\s*", "", seller_text))
+                if is_seller_label_only_text(seller_name):
+                    seller_name = None
+
+            if not seller_name:
+                seller_context_selectors = [
+                    "#deliveryBlockMessage",
+                    "#merchantInfoFeature_feature_div",
+                    "#fulfillerInfoFeature_feature_div",
+                    "#merchantInfo",
+                    "#tabular-buybox",
+                ]
+                for s2 in seller_context_selectors:
+                    try:
+                        raw2 = await page.locator(s2).first.inner_text(timeout=1200)
+                        raw2 = clean_text(raw2)
+                        if not raw2:
+                            continue
+                        parsed = extract_seller_name_from_text(raw2)
+                        if parsed and not is_seller_label_only_text(parsed):
+                            seller_text = seller_text or raw2
+                            seller_name = parsed
+                            break
+                    except Exception:
+                        continue
 
             if (not seller_name) and availability_text:
                 seller_name = extract_seller_name_from_text(availability_text)
