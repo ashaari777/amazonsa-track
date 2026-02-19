@@ -8,9 +8,13 @@ import asyncio
 import threading
 import random
 import requests
+import smtplib
+import ssl
 
 from datetime import datetime, timedelta
 from functools import wraps
+from email.message import EmailMessage
+from email.utils import formataddr
 
 from flask import (
     Flask,
@@ -43,6 +47,22 @@ BLOCK_HEAVY_RESOURCES = (os.environ.get("BLOCK_HEAVY_RESOURCES", "1") or "").str
     "yes",
     "on",
 }
+SMTP_HOST = (os.environ.get("SMTP_HOST") or os.environ.get("EMAIL_SMTP_HOST") or "smtp.gmail.com").strip()
+try:
+    SMTP_PORT = int((os.environ.get("SMTP_PORT") or os.environ.get("EMAIL_SMTP_PORT") or "587").strip())
+except Exception:
+    SMTP_PORT = 587
+SMTP_USE_SSL = (os.environ.get("SMTP_USE_SSL") or os.environ.get("EMAIL_SMTP_SSL") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+SMTP_USE_STARTTLS = (os.environ.get("SMTP_USE_STARTTLS") or "").strip().lower() not in {"0", "false", "no", "off"}
+EMAIL_USER = (os.environ.get("EMAIL_USER") or "").strip()
+EMAIL_PASS = (os.environ.get("EMAIL_PASS") or "").strip()
+EMAIL_FROM = (os.environ.get("EMAIL_FROM") or EMAIL_USER or "no-reply@pricehawk.local").strip()
+EMAIL_FROM_NAME = (os.environ.get("EMAIL_FROM_NAME") or "PriceHawk").strip()
 
 try:
     PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "45000") or "45000")
@@ -278,6 +298,46 @@ def verify_reset_token(token, email):
         return None
 
     return data["user_id"]
+
+
+def send_password_reset_email(to_email, reset_link):
+    """Send password reset email via SMTP. Returns (ok, error_message)."""
+    if not EMAIL_USER or not EMAIL_PASS:
+        return False, "EMAIL_USER/EMAIL_PASS not configured"
+    if not SMTP_HOST:
+        return False, "SMTP_HOST not configured"
+
+    msg = EmailMessage()
+    msg["Subject"] = "Reset your PriceHawk password"
+    msg["From"] = formataddr((EMAIL_FROM_NAME, EMAIL_FROM))
+    msg["To"] = to_email
+    msg.set_content(
+        (
+            "We received a request to reset your password.\n\n"
+            f"Reset link: {reset_link}\n\n"
+            "This link expires in 2 hours.\n"
+            "If you did not request this, you can ignore this email."
+        )
+    )
+
+    try:
+        if SMTP_USE_SSL:
+            with smtplib.SMTP_SSL(
+                SMTP_HOST, SMTP_PORT, timeout=20, context=ssl.create_default_context()
+            ) as smtp:
+                smtp.login(EMAIL_USER, EMAIL_PASS)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+                smtp.ehlo()
+                if SMTP_USE_STARTTLS:
+                    smtp.starttls(context=ssl.create_default_context())
+                    smtp.ehlo()
+                smtp.login(EMAIL_USER, EMAIL_PASS)
+                smtp.send_message(msg)
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 def get_location_from_ip(ip):
@@ -1909,10 +1969,13 @@ def forgot():
         return redirect(url_for("forgot"))
 
     token = make_reset_token(user["id"], email)
-
-    # Manual display for now (email sending not wired)
     reset_link = url_for("reset", token=token, _external=True)
-    flash(f"Reset link (copy/paste): {reset_link}", "ok")
+    sent, err = send_password_reset_email(email, reset_link)
+    if sent:
+        flash("If that email exists, you will get a reset link.", "ok")
+    else:
+        # Fallback keeps password reset usable even if SMTP is not configured.
+        flash(f"Email not sent ({err}). Reset link (copy/paste): {reset_link}", "error")
     return redirect(url_for("forgot"))
 
 
