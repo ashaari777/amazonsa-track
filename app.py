@@ -215,6 +215,9 @@ def extract_asin(text):
     patterns = [
         r"/dp/([A-Z0-9]{10})",
         r"/gp/product/([A-Z0-9]{10})",
+        r"/gp/aw/d/([A-Z0-9]{10})",
+        r"/product/([A-Z0-9]{10})",
+        r"[?&]pd_rd_i=([A-Z0-9]{10})",
         r"asin=([A-Z0-9]{10})",
     ]
     for p in patterns:
@@ -355,17 +358,24 @@ def extract_seller_name_from_text(t):
     txt = clean_text(t)
     if not txt:
         return None
+
+    # Common canonical form on Amazon.sa pages.
+    if re.search(r"(?i)\bamazon\.sa\b", txt):
+        return "Amazon.sa"
+
     patterns = [
+        r"(?i)shipper\s*/\s*seller\s*[:\-]?\s*(.+?)(?:[.;]|$)",
         r"(?i)ships\s+from\s+and\s+sold\s+by\s+(.+?)(?:[.;]|$)",
         r"(?i)dispatched\s+from\s+and\s+sold\s+by\s+(.+?)(?:[.;]|$)",
+        r"(?i)seller\s*[:\-]\s*(.+?)(?:[.;]|$)",
         r"(?i)sold\s+by\s+(.+?)(?:[.;]|$)",
     ]
     for p in patterns:
         m = re.search(p, txt)
         if m:
-            name = clean_text(m.group(1))
+            name = normalize_seller_name(m.group(1))
             return name or None
-    return None
+    return normalize_seller_name(txt)
 
 
 def is_seller_label_only_text(t):
@@ -377,6 +387,43 @@ def is_seller_label_only_text(t):
         "seller",
         "shipper",
     }
+
+
+def normalize_seller_name(t):
+    name = clean_text(t)
+    if not name:
+        return None
+
+    # Remove label-like prefixes.
+    name = re.sub(r"(?i)^shipper\s*/\s*seller\s*[:\-]?\s*", "", name)
+    name = re.sub(r"(?i)^sold\s+by\s*[:\-]?\s*", "", name)
+    name = re.sub(r"(?i)^seller\s*[:\-]?\s*", "", name)
+    name = clean_text(name)
+
+    # Canonicalize Amazon seller name.
+    if re.search(r"(?i)\bamazon\.sa\b", name):
+        return "Amazon.sa"
+
+    # Cut delivery text that may be concatenated in the same node.
+    name = re.split(
+        r"(?i)\b(?:free\s+delivery|or\s+fastest\s+delivery|order\s+within|ships?\s+from|dispatched\s+from|delivery)\b",
+        name,
+        maxsplit=1,
+    )[0]
+    name = clean_text(name.strip(" .,:;|-"))
+    if not name:
+        return None
+    if is_seller_label_only_text(name):
+        return None
+
+    low = name.lower()
+    if any(
+        k in low
+        for k in ["free delivery", "order within", "fastest delivery", "tomorrow", "today"]
+    ):
+        return None
+
+    return name
 
 
 # ---------------- Telegram Notifications ----------------
@@ -644,6 +691,37 @@ async def scrape_one_amazon_sa(url_or_asin):
                 title = clean_text(title)
             except Exception:
                 title = None
+            if not title:
+                title_selectors = [
+                    "#title span#productTitle",
+                    "#title span",
+                    "h1#title span",
+                    "meta[property='og:title']",
+                ]
+                for sel in title_selectors:
+                    try:
+                        if sel.startswith("meta"):
+                            candidate = await page.locator(sel).first.get_attribute("content", timeout=1800)
+                        else:
+                            candidate = await page.locator(sel).first.inner_text(timeout=1800)
+                        candidate = clean_text(candidate)
+                        if candidate:
+                            title = candidate
+                            break
+                    except Exception:
+                        continue
+            if not title:
+                try:
+                    page_title = clean_text(await page.title())
+                    # Keep only the product part from Amazon title suffixes.
+                    page_title = re.split(r"\s+:\s+Buy Online at Best Price", page_title, maxsplit=1)[0]
+                    page_title = re.split(r"\s+:\s+Amazon\.sa", page_title, maxsplit=1)[0]
+                    if page_title and page_title.lower() != "amazon.sa":
+                        title = page_title
+                except Exception:
+                    pass
+            if title and asin and clean_text(title).upper() == asin.upper():
+                title = None
 
             # Availability / offers state
             availability_text = None
@@ -691,20 +769,24 @@ async def scrape_one_amazon_sa(url_or_asin):
                 try:
                     raw = await page.locator(sel).first.inner_text(timeout=1400)
                     raw = clean_text(raw)
-                    if raw:
-                        if is_seller_label_only_text(raw):
-                            continue
+                    if not raw:
+                        continue
+                    if is_seller_label_only_text(raw):
+                        continue
+                    parsed = extract_seller_name_from_text(raw)
+                    if parsed:
                         seller_text = raw
+                        seller_name = parsed
                         break
+                    if not seller_text:
+                        seller_text = raw
                 except Exception:
                     continue
 
-            if seller_text:
+            if seller_text and not seller_name:
                 seller_name = extract_seller_name_from_text(seller_text)
                 if not seller_name:
-                    seller_name = clean_text(re.sub(r"(?i)^sold by\s*[:\-]?\s*", "", seller_text))
-                if is_seller_label_only_text(seller_name):
-                    seller_name = None
+                    seller_name = normalize_seller_name(seller_text)
 
             if not seller_name:
                 seller_context_selectors = [
@@ -730,6 +812,7 @@ async def scrape_one_amazon_sa(url_or_asin):
 
             if (not seller_name) and availability_text:
                 seller_name = extract_seller_name_from_text(availability_text)
+            seller_name = normalize_seller_name(seller_name)
 
             # Price (strict product-offer selectors only; no generic page-wide price selectors)
             price_text = None
@@ -1138,7 +1221,7 @@ def index():
             srow = cur.fetchone()
             if srow:
                 seller = (srow.get("seller_name") or srow.get("seller_text") or "").strip() or None
-        it["latest_seller"] = seller
+        it["latest_seller"] = normalize_seller_name(seller)
         it["latest_availability"] = latest.get("availability_text") if latest else None
         if (not it["latest_price_text"]) and it["latest_availability"]:
             it["latest_price_text"] = it["latest_availability"]
@@ -1280,7 +1363,9 @@ def price_monitoring():
                 "url": r.get("url"),
                 "name": name,
                 "current_price_text": price_text,
-                "seller_name": (r.get("effective_seller") or r.get("seller_name") or r.get("seller_text") or "").strip() or None,
+                "seller_name": normalize_seller_name(
+                    (r.get("effective_seller") or r.get("seller_name") or r.get("seller_text") or "").strip() or None
+                ),
                 "availability_text": (r.get("availability_text") or "").strip() or None,
                 "target_price_value": target_val,
                 "reached_at": reached_at,
@@ -1304,16 +1389,25 @@ def price_monitoring():
 def add():
     raw = (request.form.get("item") or "").strip()
     asin = extract_asin(raw)
-    # Resolve Amazon short-links (e.g., https://amzn.eu/...) to the final Amazon URL, then extract ASIN
+    # Resolve redirects for Amazon links (including short links like amzn.eu) and extract ASIN.
     if (not asin) and raw.lower().startswith(("http://", "https://")):
         try:
-            if re.search(r"https?://(www\.)?amzn\.(eu|to)/", raw, re.IGNORECASE):
-                r = requests.get(raw, allow_redirects=True, timeout=10, headers={"User-Agent": USER_AGENT})
-                final_url = (r.url or "").strip()
-                if final_url:
-                    asin = extract_asin(final_url)
-                    if asin:
-                        raw = final_url
+            if re.search(r"https?://([^/]+\.)?(amzn\.(eu|to)|amazon\.)", raw, re.IGNORECASE):
+                r = requests.get(raw, allow_redirects=True, timeout=12, headers={"User-Agent": USER_AGENT})
+                candidates = [raw, (r.url or "").strip()] + [(h.url or "").strip() for h in (r.history or [])]
+                for u in candidates:
+                    if not u:
+                        continue
+                    found = extract_asin(u)
+                    if found:
+                        asin = found
+                        raw = (r.url or u).strip()
+                        break
+                if (not asin) and r.text:
+                    m = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", r.text, re.IGNORECASE)
+                    if m:
+                        asin = m.group(1).upper()
+                        raw = (r.url or raw).strip()
         except Exception:
             pass
     if not asin:
