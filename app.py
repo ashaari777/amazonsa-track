@@ -33,7 +33,7 @@ from psycopg2.extras import RealDictCursor
 
 # ---------------- Config ----------------
 
-APP_SECRET = os.environ.get("APP_SECRET", "dev-secret-change-me")
+APP_SECRET = os.environ.get("APP_SECRET") or os.environ.get("SECRET_KEY") or "dev-secret-change-me"
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE")
 CRON_TOKEN = os.environ.get("CRON_TOKEN", "")
 SUPER_ADMIN_EMAIL = os.environ.get("SUPER_ADMIN_EMAIL", "admin@zarss.local")
@@ -318,6 +318,39 @@ def max_percent_from_text(t):
     return max(nums) if nums else None
 
 
+def clean_text(t):
+    return re.sub(r"\s+", " ", (t or "")).strip()
+
+
+def is_unavailable_text(t):
+    low = clean_text(t).lower()
+    return any(
+        k in low
+        for k in [
+            "currently unavailable",
+            "temporarily out of stock",
+            "out of stock",
+            "unavailable",
+        ]
+    )
+
+
+def is_offers_only_text(t):
+    low = clean_text(t).lower()
+    return any(
+        k in low
+        for k in [
+            "only available from",
+            "see all offers",
+            "see all buying options",
+            "available from these sellers",
+            "third-party sellers",
+            "other sellers",
+            "buying choices",
+        ]
+    )
+
+
 # ---------------- Telegram Notifications ----------------
 
 def send_telegram_alert(chat_id, item_data):
@@ -547,6 +580,10 @@ async def scrape_one_amazon_sa(url_or_asin):
         "price_value": None,
         "coupon_text": None,
         "discount_percent": None,
+        "seller_text": None,
+        "seller_name": None,
+        "availability_text": None,
+        "source_hint": None,
         "error": None,
     }
 
@@ -576,32 +613,97 @@ async def scrape_one_amazon_sa(url_or_asin):
             title = None
             try:
                 title = await page.locator("#productTitle").first.inner_text(timeout=4000)
-                title = title.strip()
+                title = clean_text(title)
             except Exception:
                 title = None
 
-            # Price
-            price_text = None
-            price_value = None
-            price_selectors = [
-                "#corePriceDisplay_desktop_feature_div span.a-price span.a-offscreen",
-                "#corePrice_feature_div span.a-price span.a-offscreen",
-                "span.a-price span.a-offscreen",
-                "#priceblock_ourprice",
-                "#priceblock_dealprice",
-                "#priceblock_saleprice",
+            # Availability / offers state
+            availability_text = None
+            availability_selectors = [
+                "#availabilityInsideBuyBox_feature_div",
+                "#availability_feature_div",
+                "#availability span",
+                "#availability",
+                "#outOfStock",
+                "#buybox-see-all-buying-choices",
+                "#buybox-see-all-buying-choices-announce",
             ]
-            for sel in price_selectors:
+            for sel in availability_selectors:
                 try:
-                    price_text = await page.locator(sel).first.inner_text(timeout=2500)
-                    price_text = price_text.strip()
-                    if price_text:
+                    raw = await page.locator(sel).first.inner_text(timeout=1400)
+                    raw = clean_text(raw)
+                    if raw:
+                        availability_text = raw
                         break
                 except Exception:
                     continue
 
-            if price_text:
-                price_value = parse_money_value(price_text)
+            offers_only = is_offers_only_text(availability_text)
+            unavailable = is_unavailable_text(availability_text)
+
+            # Seller
+            seller_text = None
+            seller_name = None
+            seller_selectors = [
+                "#merchantInfo #sellerProfileTriggerId",
+                "#merchantInfo a",
+                "#merchantInfo",
+                "#tabular-buybox .tabular-buybox-text[tabular-attribute-name='Sold by'] a",
+                "#tabular-buybox .tabular-buybox-text[tabular-attribute-name='Sold by']",
+                "#newAccordionRow_1 #sellerProfileTriggerId",
+            ]
+            for sel in seller_selectors:
+                try:
+                    raw = await page.locator(sel).first.inner_text(timeout=1400)
+                    raw = clean_text(raw)
+                    if raw:
+                        seller_text = raw
+                        break
+                except Exception:
+                    continue
+
+            if seller_text:
+                seller_name = clean_text(re.sub(r"(?i)^sold by\s*[:\-]?\s*", "", seller_text))
+
+            # Price (strict product-offer selectors only; no generic page-wide price selectors)
+            price_text = None
+            price_value = None
+            source_hint = None
+            price_selectors = [
+                "#corePriceDisplay_desktop_feature_div span.a-price span.a-offscreen",
+                "#corePrice_feature_div span.a-price span.a-offscreen",
+                "#corePrice_desktop span.a-price span.a-offscreen",
+                "#apex_desktop span.a-price span.a-offscreen",
+                "#newAccordionRow_1 span.a-price span.a-offscreen",
+                "#priceblock_ourprice",
+                "#priceblock_dealprice",
+                "#priceblock_saleprice",
+            ]
+            if not (unavailable or offers_only):
+                for sel in price_selectors:
+                    try:
+                        candidate = await page.locator(sel).first.inner_text(timeout=2500)
+                        candidate = clean_text(candidate)
+                        if not candidate:
+                            continue
+                        candidate_value = parse_money_value(candidate)
+                        if candidate_value is None:
+                            continue
+                        price_text = candidate
+                        price_value = candidate_value
+                        source_hint = sel
+                        break
+                    except Exception:
+                        continue
+
+            if unavailable:
+                price_text = "Currently unavailable"
+                price_value = None
+                source_hint = source_hint or "availability-unavailable"
+            elif offers_only and not price_value:
+                price_text = "Only available from third-party sellers (see all offers)"
+                price_value = None
+                source_hint = source_hint or "availability-offers-only"
 
             # Coupon / promo text
             coupon_text = None
@@ -616,7 +718,7 @@ async def scrape_one_amazon_sa(url_or_asin):
             for sel in coupon_candidates:
                 try:
                     t = await page.locator(sel).first.inner_text(timeout=1500)
-                    t = (t or "").strip()
+                    t = clean_text(t)
                     if t and ("coupon" in t.lower() or "%" in t or "save" in t.lower() or "off" in t.lower()):
                         coupon_text = t
                         break
@@ -635,6 +737,10 @@ async def scrape_one_amazon_sa(url_or_asin):
                     "price_value": price_value,
                     "coupon_text": coupon_text,
                     "discount_percent": discount_percent,
+                    "seller_text": seller_text,
+                    "seller_name": seller_name,
+                    "availability_text": availability_text,
+                    "source_hint": source_hint,
                 }
             )
 
@@ -656,34 +762,24 @@ def run_async(coro_fn, *args, **kwargs):
 # ---------------- DB item/history logic ----------------
 
 def write_history(item_id, data):
-    """Write a history row with de-duplication by update_interval.
+    """Write a history row with de-duplication by update_interval."""
+    data = dict(data or {})
+    data["timestamp"] = data.get("timestamp") or now_utc_str()
+    data["item_name"] = clean_text(data.get("item_name"))
+    data["price_text"] = clean_text(data.get("price_text"))
+    data["coupon_text"] = clean_text(data.get("coupon_text"))
+    data["seller_text"] = clean_text(data.get("seller_text"))
+    data["seller_name"] = clean_text(data.get("seller_name"))
+    data["availability_text"] = clean_text(data.get("availability_text"))
+    data["source_hint"] = clean_text(data.get("source_hint"))
 
-    - If price_value is missing, do not insert a new row.
-    - If coupon_text exists, update latest row coupon_text.
-    """
-
-    if not data.get("price_value"):
-        if data.get("coupon_text"):
-            conn = db_conn()
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id FROM price_history
-                WHERE item_id=%s
-                ORDER BY ts DESC
-                LIMIT 1
-                """,
-                (item_id,),
-            )
-            latest_row = cur.fetchone()
-            if latest_row:
-                cur.execute(
-                    "UPDATE price_history SET coupon_text=%s WHERE id=%s",
-                    (data["coupon_text"], latest_row["id"]),
-                )
-                conn.commit()
-            conn.close()
-        return
+    def as_float(v):
+        try:
+            if v is None:
+                return None
+            return float(v)
+        except Exception:
+            return None
 
     conn = db_conn()
     cur = conn.cursor()
@@ -694,9 +790,13 @@ def write_history(item_id, data):
     )
     latest = cur.fetchone()
 
-    # Keep the last known title if the current scrape missed it
+    # Keep the last known descriptive fields if scrape misses them.
     if (not data.get("item_name")) and latest and latest.get("item_name"):
         data["item_name"] = latest.get("item_name")
+    if (not data.get("seller_name")) and latest and latest.get("seller_name"):
+        data["seller_name"] = latest.get("seller_name")
+    if (not data.get("seller_text")) and latest and latest.get("seller_text"):
+        data["seller_text"] = latest.get("seller_text")
 
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
@@ -704,34 +804,49 @@ def write_history(item_id, data):
     except Exception:
         interval_sec = 1800
 
+    meaningful = any(
+        [
+            data.get("item_name"),
+            data.get("price_text"),
+            data.get("price_value") is not None,
+            data.get("coupon_text"),
+            data.get("seller_name"),
+            data.get("availability_text"),
+            data.get("error"),
+        ]
+    )
+    if not meaningful:
+        conn.close()
+        return
+
     insert = True
-    if latest and latest.get("price_value") is not None:
+    if latest:
         try:
-            latest_val = float(latest["price_value"])
+            last_ts = datetime.strptime(latest["ts"], "%Y-%m-%d %H:%M:%S")
+            new_ts = datetime.strptime(data["timestamp"], "%Y-%m-%d %H:%M:%S")
+            within_interval = (new_ts - last_ts).total_seconds() < interval_sec
         except Exception:
-            latest_val = None
+            within_interval = False
 
-        # If same price and within interval, skip insert
-        if latest_val is not None and data.get("price_value") is not None:
-            try:
-                new_val = float(data["price_value"])
-            except Exception:
-                new_val = None
-
-            if new_val is not None and latest_val == new_val:
-                try:
-                    last_ts = datetime.strptime(latest["ts"], "%Y-%m-%d %H:%M:%S")
-                    new_ts = datetime.strptime(data["timestamp"], "%Y-%m-%d %H:%M:%S")
-                    if (new_ts - last_ts).total_seconds() < interval_sec:
-                        insert = False
-                except Exception:
-                    insert = True
+        if within_interval:
+            same_snapshot = (
+                as_float(latest.get("price_value")) == as_float(data.get("price_value"))
+                and clean_text(latest.get("price_text")) == data.get("price_text")
+                and clean_text(latest.get("coupon_text")) == data.get("coupon_text")
+                and clean_text(latest.get("seller_name")) == data.get("seller_name")
+                and clean_text(latest.get("availability_text")) == data.get("availability_text")
+            )
+            if same_snapshot:
+                insert = False
 
     if insert:
         cur.execute(
             """
-            INSERT INTO price_history(item_id, ts, item_name, price_text, price_value, coupon_text, discount_percent, error)
-            VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO price_history(
+                item_id, ts, item_name, price_text, price_value, coupon_text,
+                discount_percent, error, seller_text, seller_name, availability_text, source_hint
+            )
+            VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 item_id,
@@ -742,6 +857,10 @@ def write_history(item_id, data):
                 data.get("coupon_text"),
                 data.get("discount_percent"),
                 data.get("error"),
+                data.get("seller_text"),
+                data.get("seller_name"),
+                data.get("availability_text"),
+                data.get("source_hint"),
             ),
         )
         conn.commit()
@@ -934,6 +1053,10 @@ def index():
                 title = (trow.get("item_name") or "").strip() or None
         it["latest_name"] = title
         it["latest_price_text"] = latest.get("price_text") if latest else None
+        it["latest_seller"] = (latest.get("seller_name") or latest.get("seller_text")) if latest else None
+        it["latest_availability"] = latest.get("availability_text") if latest else None
+        if (not it["latest_price_text"]) and it["latest_availability"]:
+            it["latest_price_text"] = it["latest_availability"]
         it["coupon_text"] = latest.get("coupon_text") if latest else None
         enriched.append(it)
 
@@ -988,11 +1111,14 @@ def price_monitoring():
             ph.item_name,
             ph.price_text,
             ph.price_value,
+            ph.seller_name,
+            ph.seller_text,
+            ph.availability_text,
             ph.ts AS last_price_ts,
             tn.reached_at
         FROM items i
         LEFT JOIN LATERAL (
-            SELECT item_name, price_text, price_value, ts
+            SELECT item_name, price_text, price_value, seller_name, seller_text, availability_text, ts
             FROM price_history
             WHERE item_id = i.id
             ORDER BY ts DESC
@@ -1019,6 +1145,10 @@ def price_monitoring():
 
         price_text = (r.get("price_text") or "").strip()
         if not price_text:
+            availability = (r.get("availability_text") or "").strip()
+            if availability:
+                price_text = availability
+        if not price_text:
             pv = r.get("price_value")
             try:
                 price_text = f"SAR {float(pv):.2f}" if pv is not None else "SAR --"
@@ -1042,6 +1172,8 @@ def price_monitoring():
                 "url": r.get("url"),
                 "name": name,
                 "current_price_text": price_text,
+                "seller_name": (r.get("seller_name") or r.get("seller_text") or "").strip() or None,
+                "availability_text": (r.get("availability_text") or "").strip() or None,
                 "target_price_value": target_val,
                 "reached_at": reached_at,
                 "status": status,
