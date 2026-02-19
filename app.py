@@ -154,7 +154,7 @@ def ensure_schema():
     # Helpful indexes
     cur.execute("CREATE INDEX IF NOT EXISTS idx_items_user ON items(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_items_asin ON items(asin)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_history_asin_ts ON price_history(asin, ts)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_history_item_ts ON price_history(item_id, ts)")
 
     conn.commit()
     cur.close()
