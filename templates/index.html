@@ -177,6 +177,15 @@
         text-overflow:ellipsis;
         max-width:100%;
     }
+    .item-title-link{
+        color: inherit;
+        text-decoration: none;
+    }
+    .item-title-link:hover{
+        text-decoration: underline;
+        text-decoration-color: rgba(218,174,81,0.75);
+        text-underline-offset: 2px;
+    }
     .meta-row{
         display:flex;
         justify-content:space-between;
@@ -629,7 +638,12 @@
             <div class="card-head">
               <div class="title-wrap">
                 <div class="item-title" title="{{ it.latest_name if it.latest_name else it.asin }}">
-                  {{ it.latest_name if it.latest_name else it.asin }}
+                  <a
+                    class="item-title-link"
+                    href="{{ it.url if it.url else ('https://www.amazon.sa/dp/' ~ it.asin ~ '?language=en') }}"
+                    target="_blank"
+                    rel="noopener"
+                  >{{ it.latest_name if it.latest_name else it.asin }}</a>
                 </div>
                 {% if it.latest_seller %}
                 <div class="seller-line">Seller: {{ it.latest_seller }}</div>
@@ -643,7 +657,6 @@
 
                     {% if it.coupon_text %}
                       <span class="pill pill-coupon" id="coupon-pct-{{ it.asin }}">--</span>
-                      <button type="button" class="pill pill-more" onclick="toggleCoupon('{{ it.asin }}')">more</button>
                     {% endif %}
                   </div>
                 </div>
@@ -722,8 +735,17 @@
     const now = new Date();
     const lastDate = parseTsUTC(lastPoint.ts);
 
-    const dataPoints = (sampled.length ? sampled : raw).slice();
-    if (!isNaN(lastDate.getTime())) {
+    let dataPoints = (sampled.length ? sampled : raw).slice();
+    if (raw.length === 1) {
+      const only = raw[0];
+      const onlyDate = parseTsUTC(only.ts);
+      const left = new Date((isNaN(onlyDate.getTime()) ? now : onlyDate).getTime() - 60 * 60 * 1000);
+      dataPoints = [
+        { ts: left.toISOString().replace('T', ' ').substring(0, 19), price_value: only.price_value },
+        only,
+        { ts: now.toISOString().replace('T', ' ').substring(0, 19), price_value: only.price_value }
+      ];
+    } else if (!isNaN(lastDate.getTime())) {
       if ((now - lastDate) > 1000 * 60 * 60 * 2) {
         dataPoints.push({
           ts: now.toISOString().replace('T', ' ').substring(0, 19),

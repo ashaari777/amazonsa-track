@@ -102,6 +102,7 @@ def ensure_schema():
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             asin TEXT NOT NULL,
+            url TEXT,
             target_price_value NUMERIC,
             created_at TEXT DEFAULT (to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
         );
@@ -150,6 +151,7 @@ def ensure_schema():
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_name TEXT")
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS availability_text TEXT")
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS source_hint TEXT")
+    cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS url TEXT")
 
     # Helpful indexes
     cur.execute("CREATE INDEX IF NOT EXISTS idx_items_user ON items(user_id)")
@@ -359,8 +361,8 @@ def extract_seller_name_from_text(t):
     if not txt:
         return None
 
-    # Common canonical form on Amazon.sa pages.
-    if re.search(r"(?i)\bamazon\.sa\b", txt):
+    # Canonical plain form.
+    if re.fullmatch(r"(?i)amazon\.sa", txt):
         return "Amazon.sa"
 
     patterns = [
@@ -375,7 +377,7 @@ def extract_seller_name_from_text(t):
         if m:
             name = normalize_seller_name(m.group(1))
             return name or None
-    return normalize_seller_name(txt)
+    return None
 
 
 def is_seller_label_only_text(t):
@@ -392,6 +394,9 @@ def is_seller_label_only_text(t):
 def normalize_seller_name(t):
     name = clean_text(t)
     if not name:
+        return None
+
+    if is_offers_only_text(name) or is_unavailable_text(name):
         return None
 
     # Remove label-like prefixes.
@@ -419,7 +424,17 @@ def normalize_seller_name(t):
     low = name.lower()
     if any(
         k in low
-        for k in ["free delivery", "order within", "fastest delivery", "tomorrow", "today"]
+        for k in [
+            "free delivery",
+            "order within",
+            "fastest delivery",
+            "tomorrow",
+            "today",
+            "see all offers",
+            "see all buying options",
+            "available from these sellers",
+            "only available from",
+        ]
     ):
         return None
 
@@ -910,7 +925,7 @@ def run_async(coro_fn, *args, **kwargs):
 
 # ---------------- DB item/history logic ----------------
 
-def write_history(item_id, data):
+def write_history(item_id, data, force=False):
     """Write a history row with de-duplication by update_interval."""
     data = dict(data or {})
     data["timestamp"] = data.get("timestamp") or now_utc_str()
@@ -942,11 +957,6 @@ def write_history(item_id, data):
     # Keep the last known descriptive fields if scrape misses them.
     if (not data.get("item_name")) and latest and latest.get("item_name"):
         data["item_name"] = latest.get("item_name")
-    if (not data.get("seller_name")) and latest and latest.get("seller_name"):
-        data["seller_name"] = latest.get("seller_name")
-    if (not data.get("seller_text")) and latest and latest.get("seller_text"):
-        data["seller_text"] = latest.get("seller_text")
-
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
         interval_sec = int(interval_str)
@@ -969,7 +979,7 @@ def write_history(item_id, data):
         return
 
     insert = True
-    if latest:
+    if latest and (not force):
         try:
             last_ts = datetime.strptime(latest["ts"], "%Y-%m-%d %H:%M:%S")
             new_ts = datetime.strptime(data["timestamp"], "%Y-%m-%d %H:%M:%S")
@@ -1049,25 +1059,33 @@ def run_global_scrape():
 
         conn = db_conn()
         cur = conn.cursor()
-        cur.execute("SELECT DISTINCT asin FROM items")
-        asins = [r["asin"] for r in cur.fetchall()]
+        cur.execute(
+            """
+            SELECT
+                id,
+                COALESCE(NULLIF(url, ''), CONCAT('https://www.amazon.sa/dp/', asin, '?language=en')) AS scrape_url
+            FROM items
+            """
+        )
+        rows = cur.fetchall()
         conn.close()
 
-        for asin in asins:
+        url_to_item_ids = {}
+        for r in rows or []:
+            scrape_url = (r.get("scrape_url") or "").strip()
+            if not scrape_url:
+                continue
+            url_to_item_ids.setdefault(scrape_url, []).append(r["id"])
+
+        for scrape_url, item_ids in url_to_item_ids.items():
             try:
-                data = run_async(scrape_one_amazon_sa, asin)
+                data = run_async(scrape_one_amazon_sa, scrape_url)
             except Exception as e:
                 data = {"timestamp": now_utc_str(), "error": str(e)}
 
-            conn2 = db_conn()
-            cur2 = conn2.cursor()
-            cur2.execute("SELECT id FROM items WHERE asin=%s", (asin,))
-            item_rows = cur2.fetchall()
-            conn2.close()
-
-            for it in item_rows:
+            for item_id in item_ids:
                 try:
-                    write_history(it["id"], data)
+                    write_history(item_id, data)
                 except Exception:
                     pass
 
@@ -1203,24 +1221,6 @@ def index():
         it["latest_name"] = title
         it["latest_price_text"] = latest.get("price_text") if latest else None
         seller = (latest.get("seller_name") or latest.get("seller_text")) if latest else None
-        if not seller:
-            cur.execute(
-                """
-                SELECT seller_name, seller_text
-                FROM price_history
-                WHERE item_id=%s
-                  AND (
-                    (seller_name IS NOT NULL AND seller_name <> '')
-                    OR (seller_text IS NOT NULL AND seller_text <> '')
-                  )
-                ORDER BY ts DESC
-                LIMIT 1
-                """,
-                (it["id"],),
-            )
-            srow = cur.fetchone()
-            if srow:
-                seller = (srow.get("seller_name") or srow.get("seller_text") or "").strip() or None
         it["latest_seller"] = normalize_seller_name(seller)
         it["latest_availability"] = latest.get("availability_text") if latest else None
         if (not it["latest_price_text"]) and it["latest_availability"]:
@@ -1297,18 +1297,7 @@ def price_monitoring():
                 ts,
                 COALESCE(
                     NULLIF(seller_name, ''),
-                    NULLIF(seller_text, ''),
-                    (
-                        SELECT COALESCE(NULLIF(ph2.seller_name, ''), NULLIF(ph2.seller_text, ''))
-                        FROM price_history ph2
-                        WHERE ph2.item_id = i.id
-                          AND (
-                            (ph2.seller_name IS NOT NULL AND ph2.seller_name <> '')
-                            OR (ph2.seller_text IS NOT NULL AND ph2.seller_text <> '')
-                          )
-                        ORDER BY ph2.ts DESC
-                        LIMIT 1
-                    )
+                    NULLIF(seller_text, '')
                 ) AS effective_seller
             FROM price_history
             WHERE item_id = i.id
@@ -1452,7 +1441,7 @@ def add():
     if row:
         try:
             data = run_async(scrape_one_amazon_sa, url)
-            write_history(row["id"], data)
+            write_history(row["id"], data, force=True)
         except Exception:
             pass
 
@@ -1530,8 +1519,9 @@ def update_one(asin):
         return redirect(url_for("index"))
 
     try:
-        data = run_async(scrape_one_amazon_sa, item["url"])
-        write_history(item["id"], data)
+        scrape_target = (item.get("url") or "").strip() or f"https://www.amazon.sa/dp/{item['asin']}?language=en"
+        data = run_async(scrape_one_amazon_sa, scrape_target)
+        write_history(item["id"], data, force=True)
         flash("Updated.", "ok")
     except Exception as e:
         flash(f"Update failed: {e}", "error")
@@ -1763,8 +1753,9 @@ def admin_update_item_by_id(item_id):
         return redirect(url_for("admin_portal", tab="items"))
 
     try:
-        data = run_async(scrape_one_amazon_sa, item["url"])
-        write_history(item["id"], data)
+        scrape_target = (item.get("url") or "").strip() or f"https://www.amazon.sa/dp/{item['asin']}?language=en"
+        data = run_async(scrape_one_amazon_sa, scrape_target)
+        write_history(item["id"], data, force=True)
         flash("Item updated successfully.", "ok")
     except Exception as e:
         flash(f"Update failed: {e}", "error")
