@@ -63,6 +63,9 @@ EMAIL_USER = (os.environ.get("EMAIL_USER") or "").strip()
 EMAIL_PASS = (os.environ.get("EMAIL_PASS") or "").strip()
 EMAIL_FROM = (os.environ.get("EMAIL_FROM") or EMAIL_USER or "no-reply@pricehawk.local").strip()
 EMAIL_FROM_NAME = (os.environ.get("EMAIL_FROM_NAME") or "PriceHawk").strip()
+EMAIL_PROVIDER = (os.environ.get("EMAIL_PROVIDER") or "auto").strip().lower()
+RESEND_API_KEY = (os.environ.get("RESEND_API_KEY") or "").strip()
+RESEND_API_URL = (os.environ.get("RESEND_API_URL") or "https://api.resend.com/emails").strip()
 
 try:
     PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "45000") or "45000")
@@ -301,24 +304,70 @@ def verify_reset_token(token, email):
 
 
 def send_password_reset_email(to_email, reset_link):
-    """Send password reset email via SMTP. Returns (ok, error_message)."""
+    """
+    Send password reset email.
+    Priority:
+    - Resend API (HTTPS) when configured
+    - SMTP fallback when configured
+    Returns (ok, error_message).
+    """
+    subject = "Reset your PriceHawk password"
+    text_body = (
+        "We received a request to reset your password.\n\n"
+        f"Reset link: {reset_link}\n\n"
+        "This link expires in 2 hours.\n"
+        "If you did not request this, you can ignore this email."
+    )
+    html_body = (
+        "<p>We received a request to reset your password.</p>"
+        f"<p><a href=\"{reset_link}\">Reset your password</a></p>"
+        "<p>This link expires in 2 hours.</p>"
+        "<p>If you did not request this, you can ignore this email.</p>"
+    )
+
+    use_resend = EMAIL_PROVIDER in {"resend", "auto"} and bool(RESEND_API_KEY)
+    if use_resend:
+        try:
+            payload = {
+                "from": formataddr((EMAIL_FROM_NAME, EMAIL_FROM)),
+                "to": [to_email],
+                "subject": subject,
+                "text": text_body,
+                "html": html_body,
+            }
+            res = requests.post(
+                RESEND_API_URL,
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=20,
+            )
+            if 200 <= res.status_code < 300:
+                return True, None
+            err_txt = (res.text or "").strip()
+            if len(err_txt) > 300:
+                err_txt = err_txt[:300] + "..."
+            if EMAIL_PROVIDER == "resend":
+                return False, f"Resend API error {res.status_code}: {err_txt}"
+        except Exception as e:
+            if EMAIL_PROVIDER == "resend":
+                return False, f"Resend API error: {e}"
+
+    if EMAIL_PROVIDER == "resend" and not RESEND_API_KEY:
+        return False, "RESEND_API_KEY not configured"
+
     if not EMAIL_USER or not EMAIL_PASS:
         return False, "EMAIL_USER/EMAIL_PASS not configured"
     if not SMTP_HOST:
         return False, "SMTP_HOST not configured"
 
     msg = EmailMessage()
-    msg["Subject"] = "Reset your PriceHawk password"
+    msg["Subject"] = subject
     msg["From"] = formataddr((EMAIL_FROM_NAME, EMAIL_FROM))
     msg["To"] = to_email
-    msg.set_content(
-        (
-            "We received a request to reset your password.\n\n"
-            f"Reset link: {reset_link}\n\n"
-            "This link expires in 2 hours.\n"
-            "If you did not request this, you can ignore this email."
-        )
-    )
+    msg.set_content(text_body)
 
     try:
         if SMTP_USE_SSL:
