@@ -351,6 +351,23 @@ def is_offers_only_text(t):
     )
 
 
+def extract_seller_name_from_text(t):
+    txt = clean_text(t)
+    if not txt:
+        return None
+    patterns = [
+        r"(?i)ships\s+from\s+and\s+sold\s+by\s+(.+?)(?:[.;]|$)",
+        r"(?i)dispatched\s+from\s+and\s+sold\s+by\s+(.+?)(?:[.;]|$)",
+        r"(?i)sold\s+by\s+(.+?)(?:[.;]|$)",
+    ]
+    for p in patterns:
+        m = re.search(p, txt)
+        if m:
+            name = clean_text(m.group(1))
+            return name or None
+    return None
+
+
 # ---------------- Telegram Notifications ----------------
 
 def send_telegram_alert(chat_id, item_data):
@@ -620,6 +637,8 @@ async def scrape_one_amazon_sa(url_or_asin):
             # Availability / offers state
             availability_text = None
             availability_selectors = [
+                "#availabilityInsideBuyBox_feature_div #availability span",
+                "#availability_feature_div #availability span",
                 "#availabilityInsideBuyBox_feature_div",
                 "#availability_feature_div",
                 "#availability span",
@@ -632,6 +651,7 @@ async def scrape_one_amazon_sa(url_or_asin):
                 try:
                     raw = await page.locator(sel).first.inner_text(timeout=1400)
                     raw = clean_text(raw)
+                    raw = clean_text(re.sub(r"\.[A-Za-z0-9_-]+\s*\{[^}]*\}", " ", raw))
                     if raw:
                         availability_text = raw
                         break
@@ -648,6 +668,9 @@ async def scrape_one_amazon_sa(url_or_asin):
                 "#merchantInfo #sellerProfileTriggerId",
                 "#merchantInfo a",
                 "#merchantInfo",
+                "#merchantInfoFeature_feature_div span",
+                "#fulfillerInfoFeature_feature_div span",
+                "#deliveryBlockMessage span.a-size-base.a-color-secondary",
                 "#tabular-buybox .tabular-buybox-text[tabular-attribute-name='Sold by'] a",
                 "#tabular-buybox .tabular-buybox-text[tabular-attribute-name='Sold by']",
                 "#newAccordionRow_1 #sellerProfileTriggerId",
@@ -663,7 +686,12 @@ async def scrape_one_amazon_sa(url_or_asin):
                     continue
 
             if seller_text:
-                seller_name = clean_text(re.sub(r"(?i)^sold by\s*[:\-]?\s*", "", seller_text))
+                seller_name = extract_seller_name_from_text(seller_text)
+                if not seller_name:
+                    seller_name = clean_text(re.sub(r"(?i)^sold by\s*[:\-]?\s*", "", seller_text))
+
+            if (not seller_name) and availability_text:
+                seller_name = extract_seller_name_from_text(availability_text)
 
             # Price (strict product-offer selectors only; no generic page-wide price selectors)
             price_text = None
