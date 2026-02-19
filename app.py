@@ -37,6 +37,17 @@ APP_SECRET = os.environ.get("APP_SECRET", "dev-secret-change-me")
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE")
 CRON_TOKEN = os.environ.get("CRON_TOKEN", "")
 SUPER_ADMIN_EMAIL = os.environ.get("SUPER_ADMIN_EMAIL", "admin@zarss.local")
+BLOCK_HEAVY_RESOURCES = (os.environ.get("BLOCK_HEAVY_RESOURCES", "1") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+try:
+    PLAYWRIGHT_TIMEOUT_MS = int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "45000") or "45000")
+except Exception:
+    PLAYWRIGHT_TIMEOUT_MS = 45000
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -46,6 +57,9 @@ USER_AGENT = (
 
 app = Flask(__name__)
 app.secret_key = APP_SECRET
+
+# Prevent overlapping global scrape runs (which can exhaust memory on small instances).
+GLOBAL_SCRAPE_LOCK = threading.Lock()
 
 
 # ---------------- DB helpers ----------------
@@ -545,7 +559,17 @@ async def scrape_one_amazon_sa(url_or_asin):
                 locale="en-US",
             )
             page = await context.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+            if BLOCK_HEAVY_RESOURCES:
+                async def route_handler(route):
+                    if route.request.resource_type in {"image", "media", "font"}:
+                        await route.abort()
+                    else:
+                        await route.continue_()
+
+                await page.route("**/*", route_handler)
+
+            await page.goto(url, wait_until="domcontentloaded", timeout=PLAYWRIGHT_TIMEOUT_MS)
             await page.wait_for_timeout(650)
 
             # Title
@@ -614,6 +638,7 @@ async def scrape_one_amazon_sa(url_or_asin):
                 }
             )
 
+            await page.close()
             await context.close()
             await browser.close()
 
@@ -732,47 +757,55 @@ def write_history(item_id, data):
 
 def run_global_scrape():
     """Global scrape: scrape each distinct ASIN once then write to each user's item."""
+    if not GLOBAL_SCRAPE_LOCK.acquire(blocking=False):
+        return
 
-    # Global interval gate
-    last_run = get_setting("last_global_run", None)
     try:
-        interval_sec = int(get_setting("update_interval", "1800") or "1800")
-    except Exception:
-        interval_sec = 1800
-
-    if last_run:
+        # Global interval gate
+        last_run = get_setting("last_global_run", None)
         try:
-            last_dt = datetime.strptime(last_run, "%Y-%m-%d %H:%M:%S")
-            if (datetime.utcnow() - last_dt).total_seconds() < interval_sec:
-                return
+            interval_sec = int(get_setting("update_interval", "1800") or "1800")
         except Exception:
-            pass
+            interval_sec = 1800
 
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT DISTINCT asin FROM items")
-    asins = [r["asin"] for r in cur.fetchall()]
-    conn.close()
-
-    for asin in asins:
-        try:
-            data = run_async(scrape_one_amazon_sa, asin)
-        except Exception as e:
-            data = {"timestamp": now_utc_str(), "error": str(e)}
-
-        conn2 = db_conn()
-        cur2 = conn2.cursor()
-        cur2.execute("SELECT id FROM items WHERE asin=%s", (asin,))
-        item_rows = cur2.fetchall()
-        conn2.close()
-
-        for it in item_rows:
+        if last_run:
             try:
-                write_history(it["id"], data)
+                last_dt = datetime.strptime(last_run, "%Y-%m-%d %H:%M:%S")
+                if (datetime.utcnow() - last_dt).total_seconds() < interval_sec:
+                    return
             except Exception:
                 pass
 
-    set_setting("last_global_run", now_utc_str())
+        # Set start time immediately so concurrent triggers during a long run are skipped.
+        set_setting("last_global_run", now_utc_str())
+
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT asin FROM items")
+        asins = [r["asin"] for r in cur.fetchall()]
+        conn.close()
+
+        for asin in asins:
+            try:
+                data = run_async(scrape_one_amazon_sa, asin)
+            except Exception as e:
+                data = {"timestamp": now_utc_str(), "error": str(e)}
+
+            conn2 = db_conn()
+            cur2 = conn2.cursor()
+            cur2.execute("SELECT id FROM items WHERE asin=%s", (asin,))
+            item_rows = cur2.fetchall()
+            conn2.close()
+
+            for it in item_rows:
+                try:
+                    write_history(it["id"], data)
+                except Exception:
+                    pass
+
+        set_setting("last_global_run", now_utc_str())
+    finally:
+        GLOBAL_SCRAPE_LOCK.release()
 
 
 # ---------------- Auth Wrappers ----------------
@@ -1598,6 +1631,10 @@ def reset(token):
 
 @app.route("/cron/update-all", methods=["GET", "POST", "HEAD"])
 def cron_update_all():
+    # Keep uptime probes lightweight. Never trigger a scrape from HEAD checks.
+    if request.method == "HEAD":
+        return "", 200
+
     if not CRON_TOKEN:
         return "CRON_TOKEN not set", 400
 
@@ -1605,8 +1642,20 @@ def cron_update_all():
     if not hmac.compare_digest(token, CRON_TOKEN):
         return "Unauthorized", 401
 
+    if request.method == "GET":
+        return jsonify(
+            {
+                "ok": True,
+                "running": GLOBAL_SCRAPE_LOCK.locked(),
+                "last_run": get_setting("last_global_run", None),
+            }
+        ), 200
+
+    if GLOBAL_SCRAPE_LOCK.locked():
+        return "Already running", 202
+
     threading.Thread(target=run_global_scrape, daemon=True).start()
-    return "OK started", 200
+    return "OK started", 202
 
 
 # ---------------- Telegram Bot Routes ----------------
