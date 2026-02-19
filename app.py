@@ -1631,8 +1631,8 @@ def reset(token):
 
 @app.route("/cron/update-all", methods=["GET", "POST", "HEAD"])
 def cron_update_all():
-    # Keep uptime probes lightweight. Never trigger a scrape from HEAD checks.
-    if request.method == "HEAD":
+    # Keep plain uptime probes lightweight.
+    if request.method == "HEAD" and not (request.headers.get("X-CRON-TOKEN") or request.args.get("token")):
         return "", 200
 
     if not CRON_TOKEN:
