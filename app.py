@@ -1053,7 +1053,26 @@ def index():
                 title = (trow.get("item_name") or "").strip() or None
         it["latest_name"] = title
         it["latest_price_text"] = latest.get("price_text") if latest else None
-        it["latest_seller"] = (latest.get("seller_name") or latest.get("seller_text")) if latest else None
+        seller = (latest.get("seller_name") or latest.get("seller_text")) if latest else None
+        if not seller:
+            cur.execute(
+                """
+                SELECT seller_name, seller_text
+                FROM price_history
+                WHERE item_id=%s
+                  AND (
+                    (seller_name IS NOT NULL AND seller_name <> '')
+                    OR (seller_text IS NOT NULL AND seller_text <> '')
+                  )
+                ORDER BY ts DESC
+                LIMIT 1
+                """,
+                (it["id"],),
+            )
+            srow = cur.fetchone()
+            if srow:
+                seller = (srow.get("seller_name") or srow.get("seller_text") or "").strip() or None
+        it["latest_seller"] = seller
         it["latest_availability"] = latest.get("availability_text") if latest else None
         if (not it["latest_price_text"]) and it["latest_availability"]:
             it["latest_price_text"] = it["latest_availability"]
@@ -1113,12 +1132,35 @@ def price_monitoring():
             ph.price_value,
             ph.seller_name,
             ph.seller_text,
+            ph.effective_seller,
             ph.availability_text,
             ph.ts AS last_price_ts,
             tn.reached_at
         FROM items i
         LEFT JOIN LATERAL (
-            SELECT item_name, price_text, price_value, seller_name, seller_text, availability_text, ts
+            SELECT
+                item_name,
+                price_text,
+                price_value,
+                seller_name,
+                seller_text,
+                availability_text,
+                ts,
+                COALESCE(
+                    NULLIF(seller_name, ''),
+                    NULLIF(seller_text, ''),
+                    (
+                        SELECT COALESCE(NULLIF(ph2.seller_name, ''), NULLIF(ph2.seller_text, ''))
+                        FROM price_history ph2
+                        WHERE ph2.item_id = i.id
+                          AND (
+                            (ph2.seller_name IS NOT NULL AND ph2.seller_name <> '')
+                            OR (ph2.seller_text IS NOT NULL AND ph2.seller_text <> '')
+                          )
+                        ORDER BY ph2.ts DESC
+                        LIMIT 1
+                    )
+                ) AS effective_seller
             FROM price_history
             WHERE item_id = i.id
             ORDER BY ts DESC
@@ -1172,7 +1214,7 @@ def price_monitoring():
                 "url": r.get("url"),
                 "name": name,
                 "current_price_text": price_text,
-                "seller_name": (r.get("seller_name") or r.get("seller_text") or "").strip() or None,
+                "seller_name": (r.get("effective_seller") or r.get("seller_name") or r.get("seller_text") or "").strip() or None,
                 "availability_text": (r.get("availability_text") or "").strip() or None,
                 "target_price_value": target_val,
                 "reached_at": reached_at,
