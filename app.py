@@ -550,6 +550,116 @@ def normalize_seller_name(t):
     return name
 
 
+async def extract_primary_buying_option_offer(page):
+    """
+    Best-effort extraction from Amazon "See All Buying Options" panel.
+    Returns dict with price/seller fields or None.
+    """
+    try:
+        offer_rows = page.locator("#aod-offer, #aod-offer-list .aod-offer")
+        rows_count = await offer_rows.count()
+
+        if rows_count == 0:
+            trigger_selectors = [
+                "#buybox-see-all-buying-choices a",
+                "#buybox-see-all-buying-choices-announce",
+                "a[href*='/gp/offer-listing/']",
+                "#newAccordionRow_1 a[href*='/gp/offer-listing/']",
+            ]
+            for sel in trigger_selectors:
+                try:
+                    loc = page.locator(sel).first
+                    txt = clean_text(await loc.inner_text(timeout=700))
+                    if txt and (is_offers_only_text(txt) or "offer" in txt.lower() or "buying" in txt.lower()):
+                        await loc.click(timeout=1400)
+                        break
+                except Exception:
+                    continue
+
+            try:
+                await page.wait_for_selector("#aod-offer, #aod-offer-list .aod-offer", timeout=3500)
+            except Exception:
+                pass
+            rows_count = await offer_rows.count()
+
+        if rows_count <= 0:
+            return None
+
+        offers = []
+        for i in range(min(rows_count, 8)):
+            row = offer_rows.nth(i)
+
+            price_text = None
+            price_value = None
+            price_selectors = [
+                ".a-price .a-offscreen",
+                ".a-price.a-text-price .a-offscreen",
+                "[data-a-color='price'] .a-offscreen",
+            ]
+            for psel in price_selectors:
+                try:
+                    cand = clean_text(await row.locator(psel).first.inner_text(timeout=800))
+                    if not cand:
+                        continue
+                    pv = parse_money_value(cand)
+                    if pv is None:
+                        continue
+                    price_text = cand
+                    price_value = pv
+                    break
+                except Exception:
+                    continue
+
+            seller_text = None
+            seller_name = None
+            seller_selectors = [
+                "[id*='aod-offer-soldBy'] a",
+                "[id*='aod-offer-soldBy'] .a-size-small",
+                "[id*='aod-offer-soldBy']",
+            ]
+            for ssel in seller_selectors:
+                try:
+                    sraw = clean_text(await row.locator(ssel).first.inner_text(timeout=700))
+                    if not sraw or is_seller_label_only_text(sraw):
+                        continue
+                    seller_text = sraw
+                    seller_name = extract_seller_name_from_text(sraw) or normalize_seller_name(sraw)
+                    if seller_name:
+                        break
+                except Exception:
+                    continue
+
+            if price_value is None:
+                continue
+
+            offers.append(
+                {
+                    "price_text": price_text or (f"SAR {price_value:.2f}" if price_value is not None else None),
+                    "price_value": price_value,
+                    "seller_text": seller_text,
+                    "seller_name": normalize_seller_name(seller_name),
+                    "source_hint": "aod-offer",
+                }
+            )
+
+        if not offers:
+            return None
+
+        # Prefer Amazon.sa offer when present, otherwise use the cheapest valid offer.
+        amazon_sa_offers = [o for o in offers if (o.get("seller_name") or "").lower() == "amazon.sa"]
+        pool = amazon_sa_offers or offers
+        best = min(pool, key=lambda o: float(o.get("price_value") or 10**9))
+
+        if amazon_sa_offers:
+            best["source_hint"] = "aod-offer-amazon-sa"
+        else:
+            best["source_hint"] = "aod-offer-third-party"
+
+        return best
+    except Exception:
+        return None
+
+
 # ---------------- Telegram Notifications ----------------
 
 def send_telegram_alert(chat_id, item_data):
@@ -969,6 +1079,18 @@ async def scrape_one_amazon_sa(url_or_asin):
                     except Exception:
                         continue
 
+            # Offers-only fallback: scrape real offer rows from the buying-options panel.
+            if offers_only and not price_value:
+                offer_pick = await extract_primary_buying_option_offer(page)
+                if offer_pick and offer_pick.get("price_value") is not None:
+                    price_text = offer_pick.get("price_text")
+                    price_value = offer_pick.get("price_value")
+                    source_hint = offer_pick.get("source_hint") or "aod-offer"
+                    if offer_pick.get("seller_text"):
+                        seller_text = offer_pick.get("seller_text")
+                    if offer_pick.get("seller_name"):
+                        seller_name = offer_pick.get("seller_name")
+
             if unavailable:
                 price_text = "Currently unavailable"
                 price_value = None
@@ -1142,7 +1264,7 @@ def write_history(item_id, data, force=False):
         print(f"Alert check error: {e}")
 
 
-def run_global_scrape():
+def run_global_scrape(force_write=False):
     """Global scrape: scrape each distinct ASIN once then write to each user's item."""
     if not GLOBAL_SCRAPE_LOCK.acquire(blocking=False):
         return
@@ -1194,7 +1316,7 @@ def run_global_scrape():
 
             for item_id in item_ids:
                 try:
-                    write_history(item_id, data)
+                    write_history(item_id, data, force=force_write)
                 except Exception:
                     pass
 
@@ -1781,7 +1903,7 @@ def set_update_interval():
 @app.route("/admin/force-update", methods=["POST"])
 @admin_required
 def force_update():
-    threading.Thread(target=run_global_scrape, daemon=True).start()
+    threading.Thread(target=run_global_scrape, kwargs={"force_write": True}, daemon=True).start()
     flash("Forced Global Update Started...", "ok")
     return redirect(url_for("admin_portal", tab="dashboard"))
 
@@ -2091,7 +2213,8 @@ def cron_update_all():
     if GLOBAL_SCRAPE_LOCK.locked():
         return "Already running", 202
 
-    threading.Thread(target=run_global_scrape, daemon=True).start()
+    force_write = (request.args.get("force") or "").strip().lower() in {"1", "true", "yes", "on"}
+    threading.Thread(target=run_global_scrape, kwargs={"force_write": force_write}, daemon=True).start()
     return "OK started", 202
 
 
