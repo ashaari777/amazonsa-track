@@ -877,28 +877,29 @@
             display: true,
             grid: { display: false },
             ticks: {
-              autoSkip: true,
-              autoSkipPadding: 5,
-              maxTicksLimit: 8,
+              // Keep all category ticks so day-boundary labels are never skipped.
+              autoSkip: false,
               maxRotation: 0,
               minRotation: 0,
               padding: 4,
               font: {
                 size: 10
               },
-              callback: function(value, index) {
-                // Show each day label only once (based on displayed ticks)
-                if (index === 0) this.__lastDayKey = null;
+              callback: function(value) {
+                const idx = Number(value);
+                if (!Number.isFinite(idx) || idx < 0 || idx >= labels.length) return '';
 
-                const label = String(this.getLabelForValue(value) || '');
+                const label = String(labels[idx] || '');
                 const dt = parseTsUTC(label);
                 if (isNaN(dt.getTime())) return '';
 
                 const key = dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
                 const txt = dt.toLocaleDateString([], { day: 'numeric', month: 'short' });
 
-                if (this.__lastDayKey === key) return '';
-                this.__lastDayKey = key;
+                // Always show first and last date, plus day changes in between.
+                if (idx === 0 || idx === labels.length - 1) return txt;
+                const prevKey = dayKeys[idx - 1] || '';
+                if (key === prevKey) return '';
                 return txt;
               }
             }
