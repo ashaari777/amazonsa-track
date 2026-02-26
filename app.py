@@ -1864,32 +1864,58 @@ def admin_portal():
         data["current_filter"] = user_filter
 
     elif tab == "clear_data":
-        cur.execute(
-            """
+        clear_q = (request.args.get("q") or "").strip()
+        clear_sort = (request.args.get("sort") or "size").strip().lower()
+        clear_dir = (request.args.get("dir") or "desc").strip().lower()
+        if clear_dir not in {"asc", "desc"}:
+            clear_dir = "desc"
+
+        sort_map = {
+            "name": "latest_name",
+            "asin": "i.asin",
+            "created_at": "i.created_at",
+            "latest_record": "latest.latest_ts",
+            "records": "records_count",
+            "size": "history_bytes",
+        }
+        sort_expr = sort_map.get(clear_sort, "history_bytes")
+
+        where_clause = ""
+        params = []
+        if clear_q:
+            where_clause = "WHERE (COALESCE(latest.item_name, '') ILIKE %s OR i.asin ILIKE %s)"
+            like_q = f"%{clear_q}%"
+            params.extend([like_q, like_q])
+
+        query = f"""
             SELECT
                 i.id,
                 i.asin,
+                i.url,
                 i.created_at,
                 u.email AS user_email,
-                COALESCE(
-                    (SELECT ph2.item_name
-                     FROM price_history ph2
-                     WHERE ph2.item_id = i.id
-                       AND ph2.item_name IS NOT NULL
-                       AND ph2.item_name <> ''
-                     ORDER BY ph2.ts DESC
-                     LIMIT 1),
-                    i.asin
-                ) AS latest_name,
+                COALESCE(latest.item_name, i.asin) AS latest_name,
+                latest.latest_ts,
                 COUNT(ph.id) AS records_count,
                 COALESCE(SUM(pg_column_size(ph)), 0) AS history_bytes
             FROM items i
             JOIN users u ON u.id = i.user_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    ph2.item_name,
+                    ph2.ts AS latest_ts
+                FROM price_history ph2
+                WHERE ph2.item_id = i.id
+                ORDER BY ph2.ts DESC
+                LIMIT 1
+            ) latest ON true
             LEFT JOIN price_history ph ON ph.item_id = i.id
-            GROUP BY i.id, u.email
-            ORDER BY history_bytes DESC, records_count DESC, i.created_at DESC
-            """
-        )
+            {where_clause}
+            GROUP BY i.id, u.email, latest.item_name, latest.latest_ts
+            ORDER BY {sort_expr} {clear_dir}, i.created_at DESC
+        """
+
+        cur.execute(query, tuple(params))
         rows = cur.fetchall() or []
         for r in rows:
             try:
@@ -1902,6 +1928,9 @@ def admin_portal():
                 r["history_bytes"] = 0
             r["history_size"] = format_bytes(r.get("history_bytes"))
         data["clear_items"] = rows
+        data["clear_q"] = clear_q
+        data["clear_sort"] = clear_sort
+        data["clear_dir"] = clear_dir
 
     conn.close()
     return render_template("admin.html", tab=tab, data=data, pending_count=pending_count)

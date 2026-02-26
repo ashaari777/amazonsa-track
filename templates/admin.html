@@ -45,7 +45,7 @@
 <body>
 
 <div class="sidebar">
-  <h2>ZARSS ADMIN</h2>
+  <h2>ADMIN</h2>
   <a href="?tab=dashboard" class="nav-item {{ 'active' if tab == 'dashboard' }}">Dashboard</a>
   <a href="?tab=active_users" class="nav-item {{ 'active' if tab == 'active_users' }}">Active Users</a>
   <a href="?tab=pending_users" class="nav-item {{ 'active' if tab == 'pending_users' }}">
@@ -190,23 +190,61 @@
   {% elif tab == 'clear_data' %}
     <h1>Clear Item History</h1>
     <div class="card">
+      {% set cur_sort = data.get('clear_sort', 'size') %}
+      {% set cur_dir = data.get('clear_dir', 'desc') %}
+      {% set cur_q = data.get('clear_q', '') %}
+      <form method="get" style="margin-bottom:20px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <input type="hidden" name="tab" value="clear_data">
+        <input name="q" value="{{ cur_q }}" placeholder="Search item name or ASIN..." style="min-width:260px;">
+        <button class="btn btn-primary">Search</button>
+      </form>
+
       <table>
         <thead>
           <tr>
-            <th>Item name</th>
-            <th>Date added</th>
-            <th>Records</th>
-            <th>Size</th>
+            <th>
+              <a href="?tab=clear_data&sort=name&dir={{ 'asc' if not (cur_sort == 'name' and cur_dir == 'asc') else 'desc' }}&q={{ cur_q|urlencode }}" style="color:inherit; text-decoration:none;">
+                Item name / ASIN{% if cur_sort == 'name' %} {{ '▲' if cur_dir == 'asc' else '▼' }}{% endif %}
+              </a>
+            </th>
+            <th>
+              <a href="?tab=clear_data&sort=created_at&dir={{ 'asc' if not (cur_sort == 'created_at' and cur_dir == 'asc') else 'desc' }}&q={{ cur_q|urlencode }}" style="color:inherit; text-decoration:none;">
+                Date added{% if cur_sort == 'created_at' %} {{ '▲' if cur_dir == 'asc' else '▼' }}{% endif %}
+              </a>
+            </th>
+            <th>
+              <a href="?tab=clear_data&sort=latest_record&dir={{ 'asc' if not (cur_sort == 'latest_record' and cur_dir == 'asc') else 'desc' }}&q={{ cur_q|urlencode }}" style="color:inherit; text-decoration:none;">
+                Latest record{% if cur_sort == 'latest_record' %} {{ '▲' if cur_dir == 'asc' else '▼' }}{% endif %}
+              </a>
+            </th>
+            <th>
+              <a href="?tab=clear_data&sort=records&dir={{ 'asc' if not (cur_sort == 'records' and cur_dir == 'asc') else 'desc' }}&q={{ cur_q|urlencode }}" style="color:inherit; text-decoration:none;">
+                Records{% if cur_sort == 'records' %} {{ '▲' if cur_dir == 'asc' else '▼' }}{% endif %}
+              </a>
+            </th>
+            <th>
+              <a href="?tab=clear_data&sort=size&dir={{ 'asc' if not (cur_sort == 'size' and cur_dir == 'asc') else 'desc' }}&q={{ cur_q|urlencode }}" style="color:inherit; text-decoration:none;">
+                Size{% if cur_sort == 'size' %} {{ '▲' if cur_dir == 'asc' else '▼' }}{% endif %}
+              </a>
+            </th>
             <th>Clear</th>
           </tr>
         </thead>
         <tbody>
           {% for it in data.get('clear_items', []) %}
           <tr>
-            <td style="max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ it.latest_name }}">
-              {{ it.latest_name or it.asin }}
+            <td style="max-width:340px;">
+              <a
+                href="{{ it.url if it.url else ('https://www.amazon.sa/dp/' ~ it.asin ~ '?language=en') }}"
+                target="_blank"
+                rel="noopener"
+                style="color:#fff; text-decoration:none; font-weight:600; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                title="{{ it.latest_name }}"
+              >{{ it.latest_name or it.asin }}</a>
+              <div style="margin-top:4px; color:#8b8b9e; font-size:0.78rem;">ASIN: {{ it.asin }}</div>
             </td>
             <td>{% if it.created_at %}<span class="js-local-dt" data-utc="{{ it.created_at|replace(' ', 'T') }}Z">{{ it.created_at }}</span>{% else %}-{% endif %}</td>
+            <td>{% if it.latest_ts %}<span class="js-local-dt" data-utc="{{ it.latest_ts|replace(' ', 'T') }}Z">{{ it.latest_ts }}</span>{% else %}Never{% endif %}</td>
             <td>{{ it.records_count or 0 }}</td>
             <td>{{ it.history_size or '0 B' }}</td>
             <td>
@@ -218,7 +256,7 @@
           {% endfor %}
           {% if not data.get('clear_items') %}
           <tr>
-            <td colspan="5" style="color:#8b8b9e;">No items found.</td>
+            <td colspan="6" style="color:#8b8b9e;">No items found.</td>
           </tr>
           {% endif %}
         </tbody>
