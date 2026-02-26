@@ -289,10 +289,17 @@
         margin-top: auto; 
         margin-bottom: 12px;
     }
-    /* We show the active hover timestamp below the chart (Keepa-like)
-       so we don't need the old info line inside the chart box. */
+    /* Keep old chart-info hidden; use chart-date below chart for hover-linked date */
     .chart-info { display:none; }
-    .chart-date{ display:none; }
+    .chart-date{
+        display:block;
+        margin-top: 6px;
+        color: rgba(255,255,255,0.72);
+        font-size: .82rem;
+        font-weight: 700;
+        letter-spacing: .1px;
+        min-height: 18px;
+    }
 
     .actions-row{
         display:grid;
@@ -601,6 +608,7 @@
     <div class="range-panel">
       <div class="range-title">Chart range</div>
       <div class="range-tabs" id="range-tabs">
+        <button class="range-btn" data-range="2w" type="button">2W</button>
         <button class="range-btn" data-range="1m" type="button">1M</button>
         <button class="range-btn" data-range="3m" type="button">3M</button>
         <button class="range-btn" data-range="6m" type="button">6M</button>
@@ -727,6 +735,7 @@
             <div class="chart-box">
               <canvas id="chart-{{ it.asin }}"></canvas>
               <div id="info-{{ it.asin }}" class="chart-info"></div>
+              <div id="date-{{ it.asin }}" class="chart-date"></div>
             </div>
 
             <div class="actions-row">
@@ -769,7 +778,8 @@
 
   function getRangeStart(now, rangeKey){
     const dt = new Date(now.getTime());
-    if (rangeKey === '1m') dt.setMonth(dt.getMonth() - 1);
+    if (rangeKey === '2w') dt.setDate(dt.getDate() - 14);
+    else if (rangeKey === '1m') dt.setMonth(dt.getMonth() - 1);
     else if (rangeKey === '3m') dt.setMonth(dt.getMonth() - 3);
     else if (rangeKey === '6m') dt.setMonth(dt.getMonth() - 6);
     else if (rangeKey === '1y') dt.setFullYear(dt.getFullYear() - 1);
@@ -788,6 +798,7 @@
     }
 
     const ctx = canvas.getContext('2d');
+    const dateEl = document.getElementById(`date-${asin}`);
 
     const source = (points || []).filter(p => p.price_value > 0);
     if (source.length === 0) return;
@@ -844,7 +855,7 @@
     const labels = dataPoints.map(p => p.ts);
     const prices = dataPoints.map(p => p.price_value);
 
-    // Build grouped x-axis labels (CamelCamel-style): only key boundaries, evenly spaced.
+    // Build grouped x-axis labels (month markers only): Jan, Feb, ...
     const parsedLabels = labels.map((ts, idx) => {
       const dt = parseTsUTC(ts);
       if (isNaN(dt.getTime())) return { idx, dt: null, dayKey: "", monthKey: "" };
@@ -858,23 +869,12 @@
     const rangeDays = (firstDt && lastDt) ? Math.max(0, (lastDt - firstDt) / (1000 * 60 * 60 * 24)) : 0;
 
     const boundaryCandidates = [];
-    if (rangeDays > 120) {
-      // Long range: month boundaries.
-      let prevMonth = null;
-      for (const p of validPoints) {
-        if (p.monthKey !== prevMonth) {
-          boundaryCandidates.push(p.idx);
-          prevMonth = p.monthKey;
-        }
-      }
-    } else {
-      // Short/medium range: day boundaries.
-      let prevDay = null;
-      for (const p of validPoints) {
-        if (p.dayKey !== prevDay) {
-          boundaryCandidates.push(p.idx);
-          prevDay = p.dayKey;
-        }
+    // Always use month boundaries on x-axis labels.
+    let prevMonth = null;
+    for (const p of validPoints) {
+      if (p.monthKey !== prevMonth) {
+        boundaryCandidates.push(p.idx);
+        prevMonth = p.monthKey;
       }
     }
 
@@ -900,10 +900,18 @@
     for (const idx of chosenTickIdx) {
       const p = parsedLabels[idx];
       if (!p || !p.dt) continue;
-      const txt = (rangeDays > 120)
-        ? p.dt.toLocaleDateString([], { month: "short", year: "2-digit" })
-        : p.dt.toLocaleDateString([], { day: "numeric", month: "short" });
+      const txt = p.dt.toLocaleDateString([], { month: "short" });
       tickLabelMap.set(idx, txt);
+    }
+
+    const fmtHoverDate = (idx) => {
+      const safeIdx = Math.max(0, Math.min(labels.length - 1, idx));
+      const dt = parseTsUTC(labels[safeIdx]);
+      if (isNaN(dt.getTime())) return '';
+      return dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    };
+    if (dateEl) {
+      dateEl.textContent = fmtHoverDate(labels.length - 1);
     }
 
 
@@ -1002,10 +1010,21 @@
               },
               title: (items) => {
                 if (!items?.length) return '';
-                const t = items[0].label || '';
+                const idx = Number(items[0].dataIndex || 0);
+                const txt = fmtHoverDate(idx);
+                if (dateEl && txt) dateEl.textContent = txt;
                 return '';
               }
             }
+          }
+        },
+        onHover: (_event, elements) => {
+          if (!dateEl) return;
+          if (elements && elements.length) {
+            const idx = Number(elements[0].index || 0);
+            dateEl.textContent = fmtHoverDate(idx);
+          } else {
+            dateEl.textContent = fmtHoverDate(labels.length - 1);
           }
         },
         scales: {
