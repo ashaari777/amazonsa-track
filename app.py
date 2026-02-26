@@ -436,6 +436,21 @@ def clean_text(t):
     return re.sub(r"\s+", " ", (t or "")).strip()
 
 
+def format_bytes(n):
+    try:
+        size = float(int(n or 0))
+    except Exception:
+        size = 0.0
+    units = ["B", "KB", "MB", "GB", "TB"]
+    idx = 0
+    while size >= 1024 and idx < len(units) - 1:
+        size /= 1024.0
+        idx += 1
+    if idx == 0:
+        return f"{int(size)} {units[idx]}"
+    return f"{size:.2f} {units[idx]}"
+
+
 def is_unavailable_text(t):
     low = clean_text(t).lower()
     return any(
@@ -1848,6 +1863,46 @@ def admin_portal():
         data["all_users"] = cur.fetchall()
         data["current_filter"] = user_filter
 
+    elif tab == "clear_data":
+        cur.execute(
+            """
+            SELECT
+                i.id,
+                i.asin,
+                i.created_at,
+                u.email AS user_email,
+                COALESCE(
+                    (SELECT ph2.item_name
+                     FROM price_history ph2
+                     WHERE ph2.item_id = i.id
+                       AND ph2.item_name IS NOT NULL
+                       AND ph2.item_name <> ''
+                     ORDER BY ph2.ts DESC
+                     LIMIT 1),
+                    i.asin
+                ) AS latest_name,
+                COUNT(ph.id) AS records_count,
+                COALESCE(SUM(pg_column_size(ph)), 0) AS history_bytes
+            FROM items i
+            JOIN users u ON u.id = i.user_id
+            LEFT JOIN price_history ph ON ph.item_id = i.id
+            GROUP BY i.id, u.email
+            ORDER BY history_bytes DESC, records_count DESC, i.created_at DESC
+            """
+        )
+        rows = cur.fetchall() or []
+        for r in rows:
+            try:
+                r["records_count"] = int(r.get("records_count") or 0)
+            except Exception:
+                r["records_count"] = 0
+            try:
+                r["history_bytes"] = int(r.get("history_bytes") or 0)
+            except Exception:
+                r["history_bytes"] = 0
+            r["history_size"] = format_bytes(r.get("history_bytes"))
+        data["clear_items"] = rows
+
     conn.close()
     return render_template("admin.html", tab=tab, data=data, pending_count=pending_count)
 
@@ -1992,6 +2047,19 @@ def admin_update_item_by_id(item_id):
         flash(f"Update failed: {e}", "error")
 
     return redirect(url_for("admin_portal", tab="items"))
+
+
+@app.route("/admin/item/<int:item_id>/clear-history", methods=["POST"])
+@admin_required
+def admin_clear_item_history(item_id):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM price_history WHERE item_id=%s", (item_id,))
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    flash(f"Cleared {deleted} history records.", "ok")
+    return redirect(url_for("admin_portal", tab="clear_data"))
 
 
 # ---------------- Auth routes ----------------

@@ -53,6 +53,7 @@
   </a>
   <a href="?tab=items" class="nav-item {{ 'active' if tab == 'items' }}">Users Items</a>
   <a href="{{ url_for('index') }}" class="nav-item">View My Track</a>
+  <a href="?tab=clear_data" class="nav-item {{ 'active' if tab == 'clear_data' }}">Clear data</a>
   
   <form method="post" action="{{ url_for('logout') }}" style="margin-top: 40px;">
     <button class="nav-item" style="width:100%; background:none; border:none; cursor:pointer; text-align:left;">Logout</button>
@@ -185,6 +186,43 @@
             {% endfor %}
           </tbody>
         </table>
+    </div>
+  {% elif tab == 'clear_data' %}
+    <h1>Clear Item History</h1>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Item name</th>
+            <th>Date added</th>
+            <th>Records</th>
+            <th>Size</th>
+            <th>Clear</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for it in data.get('clear_items', []) %}
+          <tr>
+            <td style="max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ it.latest_name }}">
+              {{ it.latest_name or it.asin }}
+            </td>
+            <td>{% if it.created_at %}<span class="js-local-dt" data-utc="{{ it.created_at|replace(' ', 'T') }}Z">{{ it.created_at }}</span>{% else %}-{% endif %}</td>
+            <td>{{ it.records_count or 0 }}</td>
+            <td>{{ it.history_size or '0 B' }}</td>
+            <td>
+              <form method="post" action="{{ url_for('admin_clear_item_history', item_id=it.id) }}" onsubmit="return confirm('Clear history data for this item?')" style="display:inline;">
+                <button class="btn" style="color:#ef4444">Clear</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not data.get('clear_items') %}
+          <tr>
+            <td colspan="5" style="color:#8b8b9e;">No items found.</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
     </div>
   {% endif %}
 </div>
