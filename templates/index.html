@@ -132,6 +132,48 @@
     }
     .btn-glow:hover { transform: translateY(-2px); }
 
+    .range-panel{
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 12px 14px;
+        margin-bottom: 16px;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        backdrop-filter: blur(10px);
+    }
+    .range-title{
+        color: var(--text-muted);
+        font-weight: 800;
+        font-size: .86rem;
+        letter-spacing: .2px;
+    }
+    .range-tabs{
+        display:flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .range-btn{
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(0,0,0,0.20);
+        color: rgba(255,255,255,0.88);
+        padding: 6px 11px;
+        border-radius: 10px;
+        cursor:pointer;
+        font-weight: 850;
+        font-size: .8rem;
+        min-width: 46px;
+    }
+    .range-btn.active{
+        border-color: rgba(218,174,81,0.55);
+        background: linear-gradient(135deg, rgba(213,51,105,0.28), rgba(218,174,81,0.28));
+        color: #fff;
+        box-shadow: 0 8px 24px rgba(213,51,105,0.24);
+    }
+
 
     /* Cards grid */
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 25px; }
@@ -480,6 +522,8 @@
         }
         .mobile-header h1 { font-size: 1.5rem; font-weight: 900; margin:0; }
         .mobile-header .right{ display:flex; align-items:center; gap:10px; }
+        .range-panel{ margin-bottom: 14px; }
+        .range-title{ width:100%; }
     }
 
     /* Optional style for Disconnect button */
@@ -552,6 +596,19 @@
         <button class="btn-glow" type="submit">Add</button>
       </form>
     </div>
+
+    {% if items %}
+    <div class="range-panel">
+      <div class="range-title">Chart range</div>
+      <div class="range-tabs" id="range-tabs">
+        <button class="range-btn" data-range="1m" type="button">1M</button>
+        <button class="range-btn" data-range="3m" type="button">3M</button>
+        <button class="range-btn" data-range="6m" type="button">6M</button>
+        <button class="range-btn" data-range="1y" type="button">1Y</button>
+        <button class="range-btn active" data-range="all" type="button">All</button>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- Telegram Setup Panel -->
     {% if not user.get('telegram_chat_id') %}
@@ -700,23 +757,54 @@
   // Keepa-like chart style
   Chart.defaults.color = 'rgba(255,255,255,0.70)';
   Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+  const parseTsUTC = (ts) => new Date(String(ts || "").replace(" ", "T") + "Z");
+  const chartInstances = new Map();
+  const historyCache = new Map();
+  let currentRange = 'all';
 
   async function loadHistory(asin) {
     const r = await fetch(`/history/${asin}.json?t=${new Date().getTime()}`);
     return await r.json();
   }
 
-  function buildChart(canvasId, points, asin) {
+  function getRangeStart(now, rangeKey){
+    const dt = new Date(now.getTime());
+    if (rangeKey === '1m') dt.setMonth(dt.getMonth() - 1);
+    else if (rangeKey === '3m') dt.setMonth(dt.getMonth() - 3);
+    else if (rangeKey === '6m') dt.setMonth(dt.getMonth() - 6);
+    else if (rangeKey === '1y') dt.setFullYear(dt.getFullYear() - 1);
+    else return null;
+    return dt;
+  }
+
+  function buildChart(canvasId, points, asin, rangeKey = 'all') {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
+    const prev = chartInstances.get(canvasId);
+    if (prev) {
+      try { prev.destroy(); } catch (_) {}
+      chartInstances.delete(canvasId);
+    }
+
     const ctx = canvas.getContext('2d');
 
-    const raw = (points || []).filter(p => p.price_value > 0);
+    const source = (points || []).filter(p => p.price_value > 0);
+    if (source.length === 0) return;
+
+    const now = new Date();
+    const rangeStart = getRangeStart(now, rangeKey);
+    let raw = source;
+    if (rangeStart) {
+      raw = source.filter(p => {
+        const dt = parseTsUTC(p.ts);
+        return !isNaN(dt.getTime()) && dt >= rangeStart;
+      });
+      if (!raw.length && source.length) raw = [source[source.length - 1]];
+    }
     if (raw.length === 0) return;
 
     // Downsample chart points to ~1 record per hour (keeps the first point, then >=60min)
-    const parseTsUTC = (ts) => new Date(String(ts || "").replace(" ", "T") + "Z");
     function downsampleHourly(arr){
       const out = [];
       let lastT = null;
@@ -732,7 +820,6 @@
 
     // Keepa style: extend to NOW (for chart data)
     const lastPoint = (sampled.length ? sampled[sampled.length - 1] : raw[raw.length - 1]);
-    const now = new Date();
     const lastDate = parseTsUTC(lastPoint.ts);
 
     let dataPoints = (sampled.length ? sampled : raw).slice();
@@ -876,7 +963,7 @@
       }
     };
 
-    new Chart(ctx, {
+    const chart = new Chart(ctx, {
       type: 'line',
       data: {
         labels,
@@ -951,6 +1038,7 @@
       },
       plugins: [crosshairPlugin]
     });
+    chartInstances.set(canvasId, chart);
   }
 
   const marketingDeals = {{ marketing_deals|tojson }};
@@ -1058,21 +1146,48 @@ function localizeDateTimes(){
     el.textContent = dt.toLocaleString();
   });
 }
-(async () => {
-    localizeDateTimes();
-    renderMarketingBanners();
-  initCoupons();
+const asins = {{ items|map(attribute="asin")|list|tojson }};
 
-    const asins = {{ items|map(attribute="asin")|list|tojson }};
-    for (const asin of asins) {
-      try {
-        const points = await loadHistory(asin);
-        buildChart(`chart-${asin}`, points, asin);
-      } catch (e) {
-        console.error(e);
+async function renderAllCharts(){
+  for (const asin of asins) {
+    try {
+      let points = historyCache.get(asin);
+      if (!points) {
+        points = await loadHistory(asin);
+        historyCache.set(asin, points);
       }
+      buildChart(`chart-${asin}`, points, asin, currentRange);
+    } catch (e) {
+      console.error(e);
     }
-  })();
+  }
+}
+
+function initRangeTabs(){
+  const wrap = document.getElementById('range-tabs');
+  if (!wrap) return;
+  const buttons = Array.from(wrap.querySelectorAll('.range-btn'));
+  const setActive = (range) => {
+    currentRange = range;
+    buttons.forEach(btn => btn.classList.toggle('active', btn.getAttribute('data-range') === range));
+  };
+  buttons.forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const range = btn.getAttribute('data-range') || 'all';
+      if (range === currentRange) return;
+      setActive(range);
+      await renderAllCharts();
+    });
+  });
+}
+
+(async () => {
+  localizeDateTimes();
+  renderMarketingBanners();
+  initCoupons();
+  initRangeTabs();
+  await renderAllCharts();
+})();
 </script>
 
 </body>
