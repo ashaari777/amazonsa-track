@@ -757,18 +757,67 @@
     const labels = dataPoints.map(p => p.ts);
     const prices = dataPoints.map(p => p.price_value);
 
-    // Build local-day labels (show each day once on the x-axis)
-    const dayKeys = labels.map(ts => {
+    // Build grouped x-axis labels (CamelCamel-style): only key boundaries, evenly spaced.
+    const parsedLabels = labels.map((ts, idx) => {
       const dt = parseTsUTC(ts);
-      if (isNaN(dt.getTime())) return "";
-      return dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,"0") + "-" + String(dt.getDate()).padStart(2,"0");
+      if (isNaN(dt.getTime())) return { idx, dt: null, dayKey: "", monthKey: "" };
+      const dayKey = dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0");
+      const monthKey = dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0");
+      return { idx, dt, dayKey, monthKey };
     });
-    const dayText = labels.map(ts => {
-      const dt = parseTsUTC(ts);
-      if (isNaN(dt.getTime())) return "";
-      return dt.toLocaleDateString([], { day: "numeric", month: "short" });
-    });
-    const dayDisplay = labels.map((_, i) => (i === 0 || dayKeys[i] !== dayKeys[i-1]) ? dayText[i] : "");
+    const validPoints = parsedLabels.filter(p => p.dt);
+    const firstDt = validPoints.length ? validPoints[0].dt : null;
+    const lastDt = validPoints.length ? validPoints[validPoints.length - 1].dt : null;
+    const rangeDays = (firstDt && lastDt) ? Math.max(0, (lastDt - firstDt) / (1000 * 60 * 60 * 24)) : 0;
+
+    const boundaryCandidates = [];
+    if (rangeDays > 120) {
+      // Long range: month boundaries.
+      let prevMonth = null;
+      for (const p of validPoints) {
+        if (p.monthKey !== prevMonth) {
+          boundaryCandidates.push(p.idx);
+          prevMonth = p.monthKey;
+        }
+      }
+    } else {
+      // Short/medium range: day boundaries.
+      let prevDay = null;
+      for (const p of validPoints) {
+        if (p.dayKey !== prevDay) {
+          boundaryCandidates.push(p.idx);
+          prevDay = p.dayKey;
+        }
+      }
+    }
+
+    function pickEvenly(arr, maxCount) {
+      const uniq = [...new Set(arr)].sort((a, b) => a - b);
+      if (uniq.length <= maxCount) return uniq;
+      const out = [uniq[0]];
+      const middleSlots = Math.max(0, maxCount - 2);
+      for (let i = 1; i <= middleSlots; i++) {
+        const pos = Math.round((i * (uniq.length - 1)) / (middleSlots + 1));
+        out.push(uniq[pos]);
+      }
+      out.push(uniq[uniq.length - 1]);
+      return [...new Set(out)].sort((a, b) => a - b);
+    }
+
+    const maxTickLabels = 6;
+    const forced = [];
+    if (labels.length > 0) forced.push(0, labels.length - 1);
+    const chosenTickIdx = new Set([...pickEvenly(boundaryCandidates, maxTickLabels), ...forced]);
+
+    const tickLabelMap = new Map();
+    for (const idx of chosenTickIdx) {
+      const p = parsedLabels[idx];
+      if (!p || !p.dt) continue;
+      const txt = (rangeDays > 120)
+        ? p.dt.toLocaleDateString([], { month: "short", year: "2-digit" })
+        : p.dt.toLocaleDateString([], { day: "numeric", month: "short" });
+      tickLabelMap.set(idx, txt);
+    }
 
 
     const fmtSAR = (n) => {
@@ -877,7 +926,7 @@
             display: true,
             grid: { display: false },
             ticks: {
-              // Keep all category ticks so day-boundary labels are never skipped.
+              // Keep category ticks, but only render selected grouped labels.
               autoSkip: false,
               maxRotation: 0,
               minRotation: 0,
@@ -888,19 +937,7 @@
               callback: function(value) {
                 const idx = Number(value);
                 if (!Number.isFinite(idx) || idx < 0 || idx >= labels.length) return '';
-
-                const label = String(labels[idx] || '');
-                const dt = parseTsUTC(label);
-                if (isNaN(dt.getTime())) return '';
-
-                const key = dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
-                const txt = dt.toLocaleDateString([], { day: 'numeric', month: 'short' });
-
-                // Always show first and last date, plus day changes in between.
-                if (idx === 0 || idx === labels.length - 1) return txt;
-                const prevKey = dayKeys[idx - 1] || '';
-                if (key === prevKey) return '';
-                return txt;
+                return tickLabelMap.get(idx) || '';
               }
             }
           },
