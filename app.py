@@ -1827,6 +1827,10 @@ def add():
             write_history(row["id"], data, force=True)
         except Exception:
             pass
+        try:
+            seed_item_from_known_data(row["id"], asin)
+        except Exception:
+            pass
 
     flash("Item added.", "ok")
     return redirect(url_for("index"))
@@ -1923,6 +1927,10 @@ def update_item_for_user(item_id, uid):
         scrape_target = (item.get("url") or "").strip() or f"https://www.amazon.sa/dp/{item['asin']}?language=en"
         data = run_async(scrape_one_amazon_sa, scrape_target)
         write_history(item["id"], data, force=True)
+        try:
+            seed_item_from_known_data(item["id"], item["asin"])
+        except Exception:
+            pass
         return True, None
     except Exception as e:
         return False, str(e)
@@ -2052,6 +2060,130 @@ def clear_history_for_asin(asin):
     conn.commit()
     conn.close()
     return True, deleted
+
+
+def seed_item_from_known_data(item_id, asin):
+    """Backfill a new/partial item from existing saved data for the same ASIN."""
+    asin = (asin or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{10}", asin):
+        return False
+
+    conn = db_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT last_item_name FROM items WHERE id=%s", (item_id,))
+    item_row = cur.fetchone()
+    if not item_row:
+        conn.close()
+        return False
+
+    cached_name = (item_row.get("last_item_name") or "").strip() or None
+
+    cur.execute(
+        """
+        SELECT
+            COUNT(*) AS total_count,
+            COUNT(*) FILTER (WHERE price_value IS NOT NULL AND price_value > 0) AS numeric_count
+        FROM price_history
+        WHERE item_id=%s
+        """,
+        (item_id,),
+    )
+    counts = cur.fetchone() or {}
+    has_history = int(counts.get("total_count") or 0) > 0
+    has_numeric_history = int(counts.get("numeric_count") or 0) > 0
+
+    changed = False
+
+    if not cached_name:
+        cur.execute(
+            """
+            SELECT COALESCE(
+                (SELECT ph.item_name
+                 FROM price_history ph
+                 WHERE ph.item_id = i.id
+                   AND ph.item_name IS NOT NULL
+                   AND ph.item_name <> ''
+                 ORDER BY ph.ts DESC
+                 LIMIT 1),
+                NULLIF(i.last_item_name, '')
+            ) AS item_name
+            FROM items i
+            WHERE i.asin=%s
+              AND i.id<>%s
+            ORDER BY i.created_at DESC, i.id DESC
+            LIMIT 1
+            """,
+            (asin, item_id),
+        )
+        name_row = cur.fetchone()
+        fallback_name = (name_row.get("item_name") or "").strip() if name_row else ""
+        if fallback_name:
+            cur.execute("UPDATE items SET last_item_name=%s WHERE id=%s", (fallback_name, item_id))
+            cached_name = fallback_name
+            changed = True
+
+    if (not has_history) or (not has_numeric_history):
+        cur.execute(
+            """
+            SELECT
+                ph.ts,
+                ph.item_name,
+                ph.price_text,
+                ph.price_value,
+                ph.coupon_text,
+                ph.discount_percent,
+                ph.error,
+                ph.seller_text,
+                ph.seller_name,
+                ph.availability_text,
+                ph.source_hint
+            FROM items i
+            JOIN price_history ph ON ph.item_id = i.id
+            WHERE i.asin=%s
+              AND i.id<>%s
+            ORDER BY
+              CASE WHEN ph.price_value IS NOT NULL AND ph.price_value > 0 THEN 0 ELSE 1 END,
+              ph.ts DESC
+            LIMIT 1
+            """,
+            (asin, item_id),
+        )
+        source_row = cur.fetchone()
+
+        if source_row:
+            source_has_numeric = source_row.get("price_value") is not None and float(source_row.get("price_value")) > 0
+            should_clone = (not has_history) or ((not has_numeric_history) and source_has_numeric)
+            if should_clone:
+                cur.execute(
+                    """
+                    INSERT INTO price_history(
+                        item_id, ts, item_name, price_text, price_value, coupon_text,
+                        discount_percent, error, seller_text, seller_name, availability_text, source_hint
+                    )
+                    VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item_id,
+                        source_row.get("ts") or now_utc_str(),
+                        (source_row.get("item_name") or cached_name),
+                        source_row.get("price_text"),
+                        source_row.get("price_value"),
+                        source_row.get("coupon_text"),
+                        source_row.get("discount_percent"),
+                        source_row.get("error"),
+                        source_row.get("seller_text"),
+                        source_row.get("seller_name"),
+                        source_row.get("availability_text"),
+                        source_row.get("source_hint") or "db_seed",
+                    ),
+                )
+                changed = True
+
+    if changed:
+        conn.commit()
+    conn.close()
+    return changed
 
 
 # ---------------- Admin routes (single-page admin.html) ----------------

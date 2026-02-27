@@ -716,7 +716,7 @@
 
                 <div class="meta-row">
                   <div class="pills">
-                    <div class="pill"><strong id="cur-{{ it.id }}">--</strong></div>
+                    <div class="pill"><strong id="cur-{{ it.id }}">{{ it.latest_price_text if it.latest_price_text else '--' }}</strong></div>
                     <div class="pill pill-low"><strong id="l-{{ it.id }}">L: --</strong></div>
                     <div class="pill pill-high"><strong id="h-{{ it.id }}">H: --</strong></div>
 
@@ -801,7 +801,10 @@
     const dateEl = document.getElementById(`date-${itemKey}`);
 
     const source = (points || []).filter(p => p.price_value > 0);
-    if (source.length === 0) return;
+    if (source.length === 0) {
+      if (dateEl) dateEl.textContent = 'No numeric price yet';
+      return;
+    }
 
     const now = new Date();
     const rangeStart = getRangeStart(now, rangeKey);
