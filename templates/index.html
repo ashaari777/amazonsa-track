@@ -716,26 +716,26 @@
 
                 <div class="meta-row">
                   <div class="pills">
-                    <div class="pill"><strong id="cur-{{ it.asin }}">--</strong></div>
-                    <div class="pill pill-low"><strong id="l-{{ it.asin }}">L: --</strong></div>
-                    <div class="pill pill-high"><strong id="h-{{ it.asin }}">H: --</strong></div>
+                    <div class="pill"><strong id="cur-{{ it.id }}">--</strong></div>
+                    <div class="pill pill-low"><strong id="l-{{ it.id }}">L: --</strong></div>
+                    <div class="pill pill-high"><strong id="h-{{ it.id }}">H: --</strong></div>
 
                     {% if it.coupon_text %}
-                      <span class="pill pill-coupon" id="coupon-pct-{{ it.asin }}">--</span>
+                      <span class="pill pill-coupon" id="coupon-pct-{{ it.id }}">--</span>
                     {% endif %}
                   </div>
                 </div>
 
                 {% if it.coupon_text %}
-                  <div class="coupon-expand" id="coupon-full-{{ it.asin }}" style="display:none;">{{ it.coupon_text }}</div>
+                  <div class="coupon-expand" id="coupon-full-{{ it.id }}" style="display:none;">{{ it.coupon_text }}</div>
                 {% endif %}
               </div>
             </div>
 
             <div class="chart-box">
-              <canvas id="chart-{{ it.asin }}"></canvas>
-              <div id="info-{{ it.asin }}" class="chart-info"></div>
-              <div id="date-{{ it.asin }}" class="chart-date"></div>
+              <canvas id="chart-{{ it.id }}"></canvas>
+              <div id="info-{{ it.id }}" class="chart-info"></div>
+              <div id="date-{{ it.id }}" class="chart-date"></div>
             </div>
 
             <div class="actions-row">
@@ -750,7 +750,7 @@
                 <button class="target-submit-btn" type="submit">Set</button>
               </form>
 
-              <form method="post" action="/delete/{{ it.asin }}" class="delete-form" onsubmit="return confirm('Delete item?')">
+              <form method="post" action="{{ url_for('delete_item', item_id=it.id) }}" class="delete-form" onsubmit="return confirm('Delete item?')">
                 <button class="del-btn" type="submit">Delete item</button>
               </form>
             </div>
@@ -771,8 +771,8 @@
   const historyCache = new Map();
   let currentRange = '2w';
 
-  async function loadHistory(asin) {
-    const r = await fetch(`/history/${asin}.json?t=${new Date().getTime()}`);
+  async function loadHistory(itemId) {
+    const r = await fetch(`/history/item/${itemId}.json?t=${new Date().getTime()}`);
     return await r.json();
   }
 
@@ -787,7 +787,7 @@
     return dt;
   }
 
-  function buildChart(canvasId, points, asin, rangeKey = '2w') {
+  function buildChart(canvasId, points, itemKey, rangeKey = '2w') {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
@@ -798,7 +798,7 @@
     }
 
     const ctx = canvas.getContext('2d');
-    const dateEl = document.getElementById(`date-${asin}`);
+    const dateEl = document.getElementById(`date-${itemKey}`);
 
     const source = (points || []).filter(p => p.price_value > 0);
     if (source.length === 0) return;
@@ -930,9 +930,9 @@
     // If there was no real variation, hide L/H (avoid: C=111 | L=111 | H=111)
     const noChange = (minV === null || maxV === null) ? true : (Math.abs(maxV - minV) < 0.005);
 
-    const curEl = document.getElementById('cur-' + asin);
-    const lEl = document.getElementById('l-' + asin);
-    const hEl = document.getElementById('h-' + asin);
+    const curEl = document.getElementById('cur-' + itemKey);
+    const lEl = document.getElementById('l-' + itemKey);
+    const hEl = document.getElementById('h-' + itemKey);
 
     if (curEl) curEl.textContent = fmtSAR(current);
     if (lEl) lEl.textContent = noChange ? 'L: —' : `L: ${fmtSAR(minV).replace('SAR ', '')}`;
@@ -1165,17 +1165,17 @@ function localizeDateTimes(){
     el.textContent = dt.toLocaleString();
   });
 }
-const asins = {{ items|map(attribute="asin")|list|tojson }};
+const itemIds = {{ items|map(attribute="id")|list|tojson }};
 
 async function renderAllCharts(){
-  for (const asin of asins) {
+  for (const itemId of itemIds) {
     try {
-      let points = historyCache.get(asin);
+      let points = historyCache.get(itemId);
       if (!points) {
-        points = await loadHistory(asin);
-        historyCache.set(asin, points);
+        points = await loadHistory(itemId);
+        historyCache.set(itemId, points);
       }
-      buildChart(`chart-${asin}`, points, asin, currentRange);
+      buildChart(`chart-${itemId}`, points, itemId, currentRange);
     } catch (e) {
       console.error(e);
     }

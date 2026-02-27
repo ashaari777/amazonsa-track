@@ -273,7 +273,8 @@
 
               <div class="btn-row">
               <a class="btn-glow" href="{{ it.url }}" target="_blank" rel="noopener">Open</a>
-              <form method="POST" action="{{ url_for('delete', asin=it.asin) }}" style="margin:0">
+              <form method="POST" action="{{ url_for('delete_item', item_id=it.id) }}" style="margin:0">
+                <input type="hidden" name="next" value="monitoring">
                 <button type="submit" class="btn-danger price-monitoring-delete" onclick="return confirm('Delete this item?')">Delete</button>
               </form>
             </div>

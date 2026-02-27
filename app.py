@@ -93,6 +93,87 @@ def db_conn():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 
+def merge_duplicate_items(cur):
+    """Collapse duplicate items for the same user and ASIN into one row."""
+    cur.execute(
+        """
+        SELECT user_id, asin, ARRAY_AGG(id ORDER BY created_at ASC, id ASC) AS item_ids
+        FROM items
+        GROUP BY user_id, asin
+        HAVING COUNT(*) > 1
+        """
+    )
+    groups = cur.fetchall() or []
+
+    for group in groups:
+        item_ids = [int(v) for v in (group.get("item_ids") or []) if v is not None]
+        if len(item_ids) < 2:
+            continue
+
+        cur.execute(
+            """
+            SELECT
+                i.id,
+                i.url,
+                i.last_item_name,
+                i.target_price_value,
+                i.created_at,
+                COUNT(ph.id) AS history_count,
+                MAX(ph.ts) AS latest_ts
+            FROM items i
+            LEFT JOIN price_history ph ON ph.item_id = i.id
+            WHERE i.id = ANY(%s)
+            GROUP BY i.id
+            ORDER BY
+                COUNT(ph.id) DESC,
+                MAX(ph.ts) DESC NULLS LAST,
+                CASE WHEN i.target_price_value IS NOT NULL THEN 1 ELSE 0 END DESC,
+                i.created_at ASC,
+                i.id ASC
+            """,
+            (item_ids,),
+        )
+        rows = cur.fetchall() or []
+        if len(rows) < 2:
+            continue
+
+        keeper = rows[0]
+        duplicate_ids = [row["id"] for row in rows[1:]]
+        if not duplicate_ids:
+            continue
+
+        best_url = (keeper.get("url") or "").strip() or None
+        best_name = (keeper.get("last_item_name") or "").strip() or None
+        best_target = keeper.get("target_price_value")
+
+        for row in rows[1:]:
+            row_url = (row.get("url") or "").strip() or None
+            row_name = (row.get("last_item_name") or "").strip() or None
+            if not best_url and row_url:
+                best_url = row_url
+            if not best_name and row_name:
+                best_name = row_name
+            if best_target is None and row.get("target_price_value") is not None:
+                best_target = row.get("target_price_value")
+
+        cur.execute(
+            """
+            UPDATE items
+            SET
+                url = COALESCE(%s, url),
+                last_item_name = COALESCE(%s, last_item_name),
+                target_price_value = COALESCE(target_price_value, %s)
+            WHERE id = %s
+            """,
+            (best_url, best_name, best_target, keeper["id"]),
+        )
+
+        cur.execute("UPDATE price_history SET item_id=%s WHERE item_id = ANY(%s)", (keeper["id"], duplicate_ids))
+        cur.execute("UPDATE notifications SET item_id=%s WHERE item_id = ANY(%s)", (keeper["id"], duplicate_ids))
+        cur.execute("UPDATE target_notifications SET item_id=%s WHERE item_id = ANY(%s)", (keeper["id"], duplicate_ids))
+        cur.execute("DELETE FROM items WHERE id = ANY(%s)", (duplicate_ids,))
+
+
 def ensure_schema():
     """Create tables and run safe migrations (idempotent)."""
     conn = db_conn()
@@ -169,6 +250,17 @@ def ensure_schema():
         """
     )
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS target_notifications (
+            id SERIAL PRIMARY KEY,
+            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            notified_at TEXT NOT NULL,
+            price_at_notification NUMERIC
+        );
+        """
+    )
+
     # ---- Safe migrations (run repeatedly) ----
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_text TEXT")
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_name TEXT")
@@ -198,10 +290,12 @@ def ensure_schema():
           )
         """
     )
+    merge_duplicate_items(cur)
 
     # Helpful indexes
     cur.execute("CREATE INDEX IF NOT EXISTS idx_items_user ON items(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_items_asin ON items(asin)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_user_asin_unique ON items(user_id, asin)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_history_item_ts ON price_history(item_id, ts)")
 
     conn.commit()
@@ -1738,6 +1832,31 @@ def add():
     return redirect(url_for("index"))
 
 
+def delete_item_for_user(item_id, uid):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM items WHERE id=%s AND user_id=%s", (item_id, uid))
+    item = cur.fetchone()
+    if item:
+        cur.execute("DELETE FROM price_history WHERE item_id=%s", (item["id"],))
+        cur.execute("DELETE FROM items WHERE id=%s", (item["id"],))
+        conn.commit()
+    conn.close()
+    return bool(item)
+
+
+@app.route("/delete-item/<int:item_id>", methods=["POST"])
+@login_required
+def delete_item(item_id):
+    uid = session.get("user_id")
+    delete_item_for_user(item_id, uid)
+    flash("Deleted.", "ok")
+    next_ = request.args.get("next") or request.form.get("next") or ""
+    if next_ == "monitoring":
+        return redirect(url_for("price_monitoring"))
+    return redirect(url_for("index"))
+
+
 @app.route("/delete/<asin>", methods=["POST"])
 @login_required
 def delete(asin):
@@ -1745,14 +1864,12 @@ def delete(asin):
     cur = conn.cursor()
     uid = session.get("user_id")
 
-    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
+    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s ORDER BY created_at DESC, id DESC LIMIT 1", (uid, asin))
     item = cur.fetchone()
-    if item:
-        cur.execute("DELETE FROM price_history WHERE item_id=%s", (item["id"],))
-        cur.execute("DELETE FROM items WHERE id=%s", (item["id"],))
-        conn.commit()
-
     conn.close()
+    if item:
+        delete_item_for_user(item["id"], uid)
+
     flash("Deleted.", "ok")
     next_ = request.args.get("next") or request.form.get("next") or ""
     if next_ == "monitoring":
@@ -1792,6 +1909,37 @@ def set_target_price(item_id):
     """Alias for set_target (older templates used endpoint name set_target_price)."""
     return set_target(item_id)
 
+def update_item_for_user(item_id, uid):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM items WHERE id=%s AND user_id=%s", (item_id, uid))
+    item = cur.fetchone()
+    conn.close()
+
+    if not item:
+        return False, "Item not found."
+
+    try:
+        scrape_target = (item.get("url") or "").strip() or f"https://www.amazon.sa/dp/{item['asin']}?language=en"
+        data = run_async(scrape_one_amazon_sa, scrape_target)
+        write_history(item["id"], data, force=True)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+@app.route("/update-item/<int:item_id>", methods=["POST"])
+@login_required
+def update_item(item_id):
+    uid = session.get("user_id")
+    ok, error = update_item_for_user(item_id, uid)
+    if ok:
+        flash("Updated.", "ok")
+    else:
+        flash(error or "Update failed.", "error")
+    return redirect(url_for("index"))
+
+
 @app.route("/update/<asin>", methods=["POST"])
 @login_required
 def update_one(asin):
@@ -1799,7 +1947,7 @@ def update_one(asin):
     cur = conn.cursor()
     uid = session.get("user_id")
 
-    cur.execute("SELECT * FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
+    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s ORDER BY created_at DESC, id DESC LIMIT 1", (uid, asin))
     item = cur.fetchone()
     conn.close()
 
@@ -1807,15 +1955,36 @@ def update_one(asin):
         flash("Item not found.", "error")
         return redirect(url_for("index"))
 
-    try:
-        scrape_target = (item.get("url") or "").strip() or f"https://www.amazon.sa/dp/{item['asin']}?language=en"
-        data = run_async(scrape_one_amazon_sa, scrape_target)
-        write_history(item["id"], data, force=True)
+    ok, error = update_item_for_user(item["id"], uid)
+    if ok:
         flash("Updated.", "ok")
-    except Exception as e:
-        flash(f"Update failed: {e}", "error")
-
+    else:
+        flash(f"Update failed: {error}", "error")
     return redirect(url_for("index"))
+
+
+@app.route("/history/item/<int:item_id>.json", methods=["GET"])
+@login_required
+def history_item_json(item_id):
+    conn = db_conn()
+    cur = conn.cursor()
+    uid = session.get("user_id")
+
+    cur.execute("SELECT id FROM items WHERE id=%s AND user_id=%s", (item_id, uid))
+    it = cur.fetchone()
+    if not it:
+        conn.close()
+        return jsonify([])
+
+    cur.execute(
+        "SELECT ts, price_value FROM price_history WHERE item_id=%s AND price_value IS NOT NULL AND price_value > 0 ORDER BY ts ASC",
+        (item_id,),
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    out = [{"ts": r["ts"], "price_value": float(r["price_value"]) if r["price_value"] is not None else None} for r in rows]
+    return jsonify(out)
 
 
 @app.route("/history/<asin>.json", methods=["GET"])
@@ -1825,7 +1994,7 @@ def history_json(asin):
     cur = conn.cursor()
     uid = session.get("user_id")
 
-    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s", (uid, asin))
+    cur.execute("SELECT id FROM items WHERE user_id=%s AND asin=%s ORDER BY created_at DESC, id DESC LIMIT 1", (uid, asin))
     it = cur.fetchone()
     if not it:
         conn.close()
