@@ -116,6 +116,7 @@ def merge_duplicate_items(cur):
                 i.id,
                 i.url,
                 i.last_item_name,
+                i.last_seller_name,
                 i.target_price_value,
                 i.created_at,
                 COUNT(ph.id) AS history_count,
@@ -144,15 +145,19 @@ def merge_duplicate_items(cur):
 
         best_url = (keeper.get("url") or "").strip() or None
         best_name = (keeper.get("last_item_name") or "").strip() or None
+        best_seller = (keeper.get("last_seller_name") or "").strip() or None
         best_target = keeper.get("target_price_value")
 
         for row in rows[1:]:
             row_url = (row.get("url") or "").strip() or None
             row_name = (row.get("last_item_name") or "").strip() or None
+            row_seller = (row.get("last_seller_name") or "").strip() or None
             if not best_url and row_url:
                 best_url = row_url
             if not best_name and row_name:
                 best_name = row_name
+            if not best_seller and row_seller:
+                best_seller = row_seller
             if best_target is None and row.get("target_price_value") is not None:
                 best_target = row.get("target_price_value")
 
@@ -162,10 +167,11 @@ def merge_duplicate_items(cur):
             SET
                 url = COALESCE(%s, url),
                 last_item_name = COALESCE(%s, last_item_name),
+                last_seller_name = COALESCE(%s, last_seller_name),
                 target_price_value = COALESCE(target_price_value, %s)
             WHERE id = %s
             """,
-            (best_url, best_name, best_target, keeper["id"]),
+            (best_url, best_name, best_seller, best_target, keeper["id"]),
         )
 
         cur.execute("UPDATE price_history SET item_id=%s WHERE item_id = ANY(%s)", (keeper["id"], duplicate_ids))
@@ -268,6 +274,7 @@ def ensure_schema():
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS source_hint TEXT")
     cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS url TEXT")
     cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_item_name TEXT")
+    cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_seller_name TEXT")
     cur.execute(
         """
         UPDATE items i
@@ -287,6 +294,41 @@ def ensure_schema():
               WHERE phx.item_id = i.id
                 AND phx.item_name IS NOT NULL
                 AND phx.item_name <> ''
+          )
+        """
+    )
+    cur.execute(
+        """
+        UPDATE items i
+        SET last_seller_name = COALESCE(
+            (
+                SELECT ph.seller_name
+                FROM price_history ph
+                WHERE ph.item_id = i.id
+                  AND ph.seller_name IS NOT NULL
+                  AND ph.seller_name <> ''
+                ORDER BY ph.ts DESC
+                LIMIT 1
+            ),
+            (
+                SELECT ph.seller_text
+                FROM price_history ph
+                WHERE ph.item_id = i.id
+                  AND ph.seller_text IS NOT NULL
+                  AND ph.seller_text <> ''
+                ORDER BY ph.ts DESC
+                LIMIT 1
+            )
+        )
+        WHERE (i.last_seller_name IS NULL OR i.last_seller_name = '')
+          AND EXISTS (
+              SELECT 1
+              FROM price_history phx
+              WHERE phx.item_id = i.id
+                AND (
+                    (phx.seller_name IS NOT NULL AND phx.seller_name <> '')
+                    OR (phx.seller_text IS NOT NULL AND phx.seller_text <> '')
+                )
           )
         """
     )
@@ -1316,15 +1358,20 @@ def write_history(item_id, data, force=False):
         (item_id,),
     )
     latest = cur.fetchone()
-    cur.execute("SELECT last_item_name FROM items WHERE id=%s", (item_id,))
+    cur.execute("SELECT last_item_name, last_seller_name FROM items WHERE id=%s", (item_id,))
     item_row = cur.fetchone()
     cached_item_name = clean_text(item_row.get("last_item_name")) if item_row else None
+    cached_seller_name = clean_text(item_row.get("last_seller_name")) if item_row else None
 
     # Keep the last known descriptive fields if scrape misses them.
     if (not data.get("item_name")) and latest and latest.get("item_name"):
         data["item_name"] = latest.get("item_name")
     if (not data.get("item_name")) and cached_item_name:
         data["item_name"] = cached_item_name
+    if (not data.get("seller_name")) and latest and latest.get("seller_name"):
+        data["seller_name"] = latest.get("seller_name")
+    if (not data.get("seller_name")) and cached_seller_name:
+        data["seller_name"] = cached_seller_name
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
         interval_sec = int(interval_str)
@@ -1367,10 +1414,12 @@ def write_history(item_id, data, force=False):
                 insert = False
 
     dirty = False
-    if data.get("item_name") and data.get("item_name") != cached_item_name:
+    new_item_name = data.get("item_name") or cached_item_name
+    new_seller_name = data.get("seller_name") or cached_seller_name
+    if new_item_name != cached_item_name or new_seller_name != cached_seller_name:
         cur.execute(
-            "UPDATE items SET last_item_name=%s WHERE id=%s",
-            (data.get("item_name"), item_id),
+            "UPDATE items SET last_item_name=%s, last_seller_name=%s WHERE id=%s",
+            (new_item_name, new_seller_name, item_id),
         )
         dirty = True
 
@@ -1471,6 +1520,25 @@ def run_global_scrape(force_write=False):
         set_setting("last_global_run", now_utc_str())
     finally:
         GLOBAL_SCRAPE_LOCK.release()
+
+
+def refresh_item_in_background(item_id, scrape_target):
+    """Fetch latest data for one item without blocking the user's request."""
+    try:
+        data = run_async(scrape_one_amazon_sa, scrape_target)
+        write_history(item_id, data, force=True)
+    except Exception as e:
+        print(f"Background refresh error for item {item_id}: {e}")
+
+
+def start_background_item_refresh(item_id, scrape_target):
+    thread = threading.Thread(
+        target=refresh_item_in_background,
+        args=(item_id, scrape_target),
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 # ---------------- Auth Wrappers ----------------
@@ -1603,11 +1671,14 @@ def index():
         it["latest_name"] = title
         it["latest_price_text"] = latest.get("price_text") if latest else None
         seller = (latest.get("seller_name") or latest.get("seller_text")) if latest else None
+        if not seller:
+            seller = (it.get("last_seller_name") or "").strip() or None
         it["latest_seller"] = normalize_seller_name(seller)
         it["latest_availability"] = latest.get("availability_text") if latest else None
         if (not it["latest_price_text"]) and it["latest_availability"]:
             it["latest_price_text"] = it["latest_availability"]
         it["coupon_text"] = latest.get("coupon_text") if latest else None
+        it["is_syncing"] = latest is None
         enriched.append(it)
 
     conn.close()
@@ -1659,6 +1730,7 @@ def price_monitoring():
             i.created_at,
             i.target_price_value,
             i.last_item_name,
+            i.last_seller_name,
             ph.item_name,
             ph.price_text,
             ph.price_value,
@@ -1736,7 +1808,13 @@ def price_monitoring():
                 "name": name,
                 "current_price_text": price_text,
                 "seller_name": normalize_seller_name(
-                    (r.get("effective_seller") or r.get("seller_name") or r.get("seller_text") or "").strip() or None
+                    (
+                        r.get("effective_seller")
+                        or r.get("seller_name")
+                        or r.get("seller_text")
+                        or r.get("last_seller_name")
+                        or ""
+                    ).strip() or None
                 ),
                 "availability_text": (r.get("availability_text") or "").strip() or None,
                 "target_price_value": target_val,
@@ -1820,19 +1898,21 @@ def add():
     row = cur.fetchone()
     conn.close()
 
-    # First scrape
+    seeded = False
     if row:
         try:
-            data = run_async(scrape_one_amazon_sa, url)
-            write_history(row["id"], data, force=True)
+            seeded = bool(seed_item_from_known_data(row["id"], asin))
         except Exception:
             pass
         try:
-            seed_item_from_known_data(row["id"], asin)
+            start_background_item_refresh(row["id"], url)
         except Exception:
             pass
 
-    flash("Item added.", "ok")
+    if seeded:
+        flash("Item added. Showing saved data now while we fetch the latest update in the background.", "ok")
+    else:
+        flash("Item added. Fetching latest data in the background. It should appear shortly.", "ok")
     return redirect(url_for("index"))
 
 
@@ -2071,13 +2151,14 @@ def seed_item_from_known_data(item_id, asin):
     conn = db_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT last_item_name FROM items WHERE id=%s", (item_id,))
+    cur.execute("SELECT last_item_name, last_seller_name FROM items WHERE id=%s", (item_id,))
     item_row = cur.fetchone()
     if not item_row:
         conn.close()
         return False
 
     cached_name = (item_row.get("last_item_name") or "").strip() or None
+    cached_seller = (item_row.get("last_seller_name") or "").strip() or None
 
     cur.execute(
         """
@@ -2121,6 +2202,41 @@ def seed_item_from_known_data(item_id, asin):
         if fallback_name:
             cur.execute("UPDATE items SET last_item_name=%s WHERE id=%s", (fallback_name, item_id))
             cached_name = fallback_name
+            changed = True
+
+    if not cached_seller:
+        cur.execute(
+            """
+            SELECT COALESCE(
+                (SELECT ph.seller_name
+                 FROM price_history ph
+                 WHERE ph.item_id = i.id
+                   AND ph.seller_name IS NOT NULL
+                   AND ph.seller_name <> ''
+                 ORDER BY ph.ts DESC
+                 LIMIT 1),
+                (SELECT ph.seller_text
+                 FROM price_history ph
+                 WHERE ph.item_id = i.id
+                   AND ph.seller_text IS NOT NULL
+                   AND ph.seller_text <> ''
+                 ORDER BY ph.ts DESC
+                 LIMIT 1),
+                NULLIF(i.last_seller_name, '')
+            ) AS seller_name
+            FROM items i
+            WHERE i.asin=%s
+              AND i.id<>%s
+            ORDER BY i.created_at DESC, i.id DESC
+            LIMIT 1
+            """,
+            (asin, item_id),
+        )
+        seller_row = cur.fetchone()
+        fallback_seller = normalize_seller_name((seller_row.get("seller_name") or "").strip()) if seller_row else None
+        if fallback_seller:
+            cur.execute("UPDATE items SET last_seller_name=%s WHERE id=%s", (fallback_seller, item_id))
+            cached_seller = fallback_seller
             changed = True
 
     if (not has_history) or (not has_numeric_history):
@@ -2173,7 +2289,7 @@ def seed_item_from_known_data(item_id, asin):
                         source_row.get("discount_percent"),
                         source_row.get("error"),
                         source_row.get("seller_text"),
-                        source_row.get("seller_name"),
+                        source_row.get("seller_name") or cached_seller,
                         source_row.get("availability_text"),
                         source_row.get("source_hint") or "db_seed",
                     ),

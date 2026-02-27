@@ -713,6 +713,9 @@
                 {% if it.latest_seller %}
                 <div class="seller-line">Seller: {{ it.latest_seller }}</div>
                 {% endif %}
+                {% if it.is_syncing %}
+                <div class="seller-line" style="color: rgba(255,255,255,0.6);">Fetching latest data in the background...</div>
+                {% endif %}
 
                 <div class="meta-row">
                   <div class="pills">
@@ -991,6 +994,10 @@
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
+        },
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -1021,10 +1028,13 @@
             }
           }
         },
-        onHover: (_event, elements) => {
+        onHover: (event, elements, chart) => {
           if (!dateEl) return;
-          if (elements && elements.length) {
-            const idx = Number(elements[0].index || 0);
+          const hoverElements = (chart && typeof chart.getElementsAtEventForMode === 'function')
+            ? chart.getElementsAtEventForMode(event, 'index', { intersect: false }, false)
+            : elements;
+          if (hoverElements && hoverElements.length) {
+            const idx = Number(hoverElements[0].index || 0);
             dateEl.textContent = fmtHoverDate(idx);
           } else {
             dateEl.textContent = fmtHoverDate(labels.length - 1);
