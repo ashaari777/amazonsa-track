@@ -219,7 +219,7 @@
             </th>
             <th>
               <a href="?tab=clear_data&sort=records&dir={{ 'asc' if not (cur_sort == 'records' and cur_dir == 'asc') else 'desc' }}&q={{ cur_q|urlencode }}" style="color:inherit; text-decoration:none;">
-                Records{% if cur_sort == 'records' %} {{ '▲' if cur_dir == 'asc' else '▼' }}{% endif %}
+                Total records{% if cur_sort == 'records' %} {{ '▲' if cur_dir == 'asc' else '▼' }}{% endif %}
               </a>
             </th>
             <th>

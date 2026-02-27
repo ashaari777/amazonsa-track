@@ -608,12 +608,12 @@
     <div class="range-panel">
       <div class="range-title">Chart range</div>
       <div class="range-tabs" id="range-tabs">
-        <button class="range-btn" data-range="2w" type="button">2W</button>
+        <button class="range-btn active" data-range="2w" type="button">2W</button>
         <button class="range-btn" data-range="1m" type="button">1M</button>
         <button class="range-btn" data-range="3m" type="button">3M</button>
         <button class="range-btn" data-range="6m" type="button">6M</button>
         <button class="range-btn" data-range="1y" type="button">1Y</button>
-        <button class="range-btn active" data-range="all" type="button">All</button>
+        <button class="range-btn" data-range="all" type="button">All</button>
       </div>
     </div>
     {% endif %}
@@ -769,7 +769,7 @@
   const parseTsUTC = (ts) => new Date(String(ts || "").replace(" ", "T") + "Z");
   const chartInstances = new Map();
   const historyCache = new Map();
-  let currentRange = 'all';
+  let currentRange = '2w';
 
   async function loadHistory(asin) {
     const r = await fetch(`/history/${asin}.json?t=${new Date().getTime()}`);
@@ -787,7 +787,7 @@
     return dt;
   }
 
-  function buildChart(canvasId, points, asin, rangeKey = 'all') {
+  function buildChart(canvasId, points, asin, rangeKey = '2w') {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
