@@ -175,6 +175,29 @@ def ensure_schema():
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS availability_text TEXT")
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS source_hint TEXT")
     cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS url TEXT")
+    cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_item_name TEXT")
+    cur.execute(
+        """
+        UPDATE items i
+        SET last_item_name = (
+            SELECT ph.item_name
+            FROM price_history ph
+            WHERE ph.item_id = i.id
+              AND ph.item_name IS NOT NULL
+              AND ph.item_name <> ''
+            ORDER BY ph.ts DESC
+            LIMIT 1
+        )
+        WHERE (i.last_item_name IS NULL OR i.last_item_name = '')
+          AND EXISTS (
+              SELECT 1
+              FROM price_history phx
+              WHERE phx.item_id = i.id
+                AND phx.item_name IS NOT NULL
+                AND phx.item_name <> ''
+          )
+        """
+    )
 
     # Helpful indexes
     cur.execute("CREATE INDEX IF NOT EXISTS idx_items_user ON items(user_id)")
@@ -1199,10 +1222,15 @@ def write_history(item_id, data, force=False):
         (item_id,),
     )
     latest = cur.fetchone()
+    cur.execute("SELECT last_item_name FROM items WHERE id=%s", (item_id,))
+    item_row = cur.fetchone()
+    cached_item_name = clean_text(item_row.get("last_item_name")) if item_row else None
 
     # Keep the last known descriptive fields if scrape misses them.
     if (not data.get("item_name")) and latest and latest.get("item_name"):
         data["item_name"] = latest.get("item_name")
+    if (not data.get("item_name")) and cached_item_name:
+        data["item_name"] = cached_item_name
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
         interval_sec = int(interval_str)
@@ -1244,6 +1272,14 @@ def write_history(item_id, data, force=False):
             if same_snapshot:
                 insert = False
 
+    dirty = False
+    if data.get("item_name") and data.get("item_name") != cached_item_name:
+        cur.execute(
+            "UPDATE items SET last_item_name=%s WHERE id=%s",
+            (data.get("item_name"), item_id),
+        )
+        dirty = True
+
     if insert:
         cur.execute(
             """
@@ -1268,6 +1304,9 @@ def write_history(item_id, data, force=False):
                 data.get("source_hint"),
             ),
         )
+        dirty = True
+
+    if dirty:
         conn.commit()
 
     conn.close()
@@ -1448,6 +1487,7 @@ def index():
         latest = cur.fetchone()
         it = dict(it)
         title = None
+        cached_title = (it.get("last_item_name") or "").strip() or None
         if latest and latest.get("item_name"):
             title = (latest.get("item_name") or "").strip() or None
         if not title:
@@ -1464,6 +1504,8 @@ def index():
             trow = cur.fetchone()
             if trow and trow.get("item_name"):
                 title = (trow.get("item_name") or "").strip() or None
+        if not title and cached_title:
+            title = cached_title
         it["latest_name"] = title
         it["latest_price_text"] = latest.get("price_text") if latest else None
         seller = (latest.get("seller_name") or latest.get("seller_text")) if latest else None
@@ -1522,6 +1564,7 @@ def price_monitoring():
             i.url,
             i.created_at,
             i.target_price_value,
+            i.last_item_name,
             ph.item_name,
             ph.price_text,
             ph.price_value,
@@ -1567,7 +1610,7 @@ def price_monitoring():
 
     items = []
     for r in rows or []:
-        name = (r.get("item_name") or "").strip() or r.get("asin") or "Item"
+        name = (r.get("item_name") or r.get("last_item_name") or "").strip() or r.get("asin") or "Item"
 
         price_text = (r.get("price_text") or "").strip()
         if not price_text:
@@ -1799,6 +1842,49 @@ def history_json(asin):
     return jsonify(out)
 
 
+def clear_history_for_asin(asin):
+    asin = (asin or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{10}", asin):
+        return False, 0
+
+    conn = db_conn()
+    cur = conn.cursor()
+
+    # Preserve the last known title on each tracked copy before removing history rows.
+    cur.execute(
+        """
+        UPDATE items i
+        SET last_item_name = COALESCE(
+            NULLIF(i.last_item_name, ''),
+            (
+                SELECT ph.item_name
+                FROM price_history ph
+                WHERE ph.item_id = i.id
+                  AND ph.item_name IS NOT NULL
+                  AND ph.item_name <> ''
+                ORDER BY ph.ts DESC
+                LIMIT 1
+            )
+        )
+        WHERE i.asin = %s
+        """,
+        (asin,),
+    )
+
+    cur.execute("SELECT id FROM items WHERE asin=%s", (asin,))
+    item_rows = cur.fetchall() or []
+    item_ids = [row["id"] for row in item_rows]
+
+    deleted = 0
+    if item_ids:
+        cur.execute("DELETE FROM price_history WHERE item_id = ANY(%s)", (item_ids,))
+        deleted = cur.rowcount
+
+    conn.commit()
+    conn.close()
+    return True, deleted
+
+
 # ---------------- Admin routes (single-page admin.html) ----------------
 
 @app.route("/admin")
@@ -1842,7 +1928,10 @@ def admin_portal():
 
         base_query = """
             SELECT i.*, u.email AS user_email,
-                   (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id AND ph.item_name IS NOT NULL AND ph.item_name <> '' ORDER BY ph.ts DESC LIMIT 1) AS latest_name,
+                   COALESCE(
+                       (SELECT ph.item_name FROM price_history ph WHERE ph.item_id=i.id AND ph.item_name IS NOT NULL AND ph.item_name <> '' ORDER BY ph.ts DESC LIMIT 1),
+                       i.last_item_name
+                   ) AS latest_name,
                    (SELECT ph.price_text FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_price_text,
                    (SELECT ph.ts FROM price_history ph WHERE ph.item_id=i.id ORDER BY ph.ts DESC LIMIT 1) AS latest_ts
             FROM items i
@@ -1872,9 +1961,9 @@ def admin_portal():
 
         sort_map = {
             "name": "latest_name",
-            "asin": "i.asin",
-            "created_at": "i.created_at",
-            "latest_record": "latest.latest_ts",
+            "asin": "asin",
+            "created_at": "created_at",
+            "latest_record": "latest_ts",
             "records": "records_count",
             "size": "history_bytes",
         }
@@ -1883,36 +1972,48 @@ def admin_portal():
         where_clause = ""
         params = []
         if clear_q:
-            where_clause = "WHERE (COALESCE(latest.item_name, '') ILIKE %s OR i.asin ILIKE %s)"
+            where_clause = "WHERE (latest_name ILIKE %s OR asin ILIKE %s)"
             like_q = f"%{clear_q}%"
             params.extend([like_q, like_q])
 
         query = f"""
-            SELECT
-                i.id,
-                i.asin,
-                i.url,
-                i.created_at,
-                u.email AS user_email,
-                COALESCE(latest.item_name, i.asin) AS latest_name,
-                latest.latest_ts,
-                COUNT(ph.id) AS records_count,
-                COALESCE(SUM(pg_column_size(ph)), 0) AS history_bytes
-            FROM items i
-            JOIN users u ON u.id = i.user_id
-            LEFT JOIN LATERAL (
+            SELECT *
+            FROM (
                 SELECT
-                    ph2.item_name,
-                    ph2.ts AS latest_ts
-                FROM price_history ph2
-                WHERE ph2.item_id = i.id
-                ORDER BY ph2.ts DESC
-                LIMIT 1
-            ) latest ON true
-            LEFT JOIN price_history ph ON ph.item_id = i.id
+                    i.asin,
+                    COALESCE(
+                        (
+                            SELECT ph2.item_name
+                            FROM items i2
+                            JOIN price_history ph2 ON ph2.item_id = i2.id
+                            WHERE i2.asin = i.asin
+                              AND ph2.item_name IS NOT NULL
+                              AND ph2.item_name <> ''
+                            ORDER BY ph2.ts DESC
+                            LIMIT 1
+                        ),
+                        MAX(NULLIF(i.last_item_name, '')),
+                        i.asin
+                    ) AS latest_name,
+                    MIN(i.created_at) AS created_at,
+                    (
+                        SELECT MAX(ph3.ts)
+                        FROM items i3
+                        JOIN price_history ph3 ON ph3.item_id = i3.id
+                        WHERE i3.asin = i.asin
+                    ) AS latest_ts,
+                    COUNT(ph.id) AS records_count,
+                    COALESCE(SUM(pg_column_size(ph)), 0) AS history_bytes,
+                    COALESCE(
+                        MIN(NULLIF(i.url, '')),
+                        'https://www.amazon.sa/dp/' || i.asin || '?language=en'
+                    ) AS url
+                FROM items i
+                LEFT JOIN price_history ph ON ph.item_id = i.id
+                GROUP BY i.asin
+            ) clear_items
             {where_clause}
-            GROUP BY i.id, u.email, latest.item_name, latest.latest_ts
-            ORDER BY {sort_expr} {clear_dir}, i.created_at DESC
+            ORDER BY {sort_expr} {clear_dir}, created_at DESC
         """
 
         cur.execute(query, tuple(params))
@@ -2083,11 +2184,31 @@ def admin_update_item_by_id(item_id):
 def admin_clear_item_history(item_id):
     conn = db_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM price_history WHERE item_id=%s", (item_id,))
-    deleted = cur.rowcount
-    conn.commit()
+    cur.execute("SELECT asin FROM items WHERE id=%s", (item_id,))
+    row = cur.fetchone()
     conn.close()
-    flash(f"Cleared {deleted} history records.", "ok")
+    if not row:
+        flash("Item not found.", "error")
+        return redirect(url_for("admin_portal", tab="clear_data"))
+
+    ok, deleted = clear_history_for_asin(row["asin"])
+    if not ok:
+        flash("Invalid ASIN.", "error")
+        return redirect(url_for("admin_portal", tab="clear_data"))
+
+    flash(f"Cleared {deleted} history records for {row['asin']}.", "ok")
+    return redirect(url_for("admin_portal", tab="clear_data"))
+
+
+@app.route("/admin/asin/<asin>/clear-history", methods=["POST"])
+@admin_required
+def admin_clear_asin_history(asin):
+    ok, deleted = clear_history_for_asin(asin)
+    if not ok:
+        flash("Invalid ASIN.", "error")
+        return redirect(url_for("admin_portal", tab="clear_data"))
+
+    flash(f"Cleared {deleted} history records for {asin.upper()}.", "ok")
     return redirect(url_for("admin_portal", tab="clear_data"))
 
 

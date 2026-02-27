@@ -248,7 +248,7 @@
             <td>{{ it.records_count or 0 }}</td>
             <td>{{ it.history_size or '0 B' }}</td>
             <td>
-              <form method="post" action="{{ url_for('admin_clear_item_history', item_id=it.id) }}" onsubmit="return confirm('Clear history data for this item?')" style="display:inline;">
+              <form method="post" action="{{ url_for('admin_clear_asin_history', asin=it.asin) }}" onsubmit="return confirm('Clear history data for this ASIN across all tracked copies?')" style="display:inline;">
                 <button class="btn" style="color:#ef4444">Clear</button>
               </form>
             </td>
