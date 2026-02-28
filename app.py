@@ -117,6 +117,8 @@ def merge_duplicate_items(cur):
                 i.url,
                 i.last_item_name,
                 i.last_seller_name,
+                i.last_rating_text,
+                i.last_review_count_text,
                 i.target_price_value,
                 i.created_at,
                 COUNT(ph.id) AS history_count,
@@ -146,18 +148,26 @@ def merge_duplicate_items(cur):
         best_url = (keeper.get("url") or "").strip() or None
         best_name = (keeper.get("last_item_name") or "").strip() or None
         best_seller = (keeper.get("last_seller_name") or "").strip() or None
+        best_rating = (keeper.get("last_rating_text") or "").strip() or None
+        best_reviews = (keeper.get("last_review_count_text") or "").strip() or None
         best_target = keeper.get("target_price_value")
 
         for row in rows[1:]:
             row_url = (row.get("url") or "").strip() or None
             row_name = (row.get("last_item_name") or "").strip() or None
             row_seller = (row.get("last_seller_name") or "").strip() or None
+            row_rating = (row.get("last_rating_text") or "").strip() or None
+            row_reviews = (row.get("last_review_count_text") or "").strip() or None
             if not best_url and row_url:
                 best_url = row_url
             if not best_name and row_name:
                 best_name = row_name
             if not best_seller and row_seller:
                 best_seller = row_seller
+            if not best_rating and row_rating:
+                best_rating = row_rating
+            if not best_reviews and row_reviews:
+                best_reviews = row_reviews
             if best_target is None and row.get("target_price_value") is not None:
                 best_target = row.get("target_price_value")
 
@@ -168,10 +178,12 @@ def merge_duplicate_items(cur):
                 url = COALESCE(%s, url),
                 last_item_name = COALESCE(%s, last_item_name),
                 last_seller_name = COALESCE(%s, last_seller_name),
+                last_rating_text = COALESCE(%s, last_rating_text),
+                last_review_count_text = COALESCE(%s, last_review_count_text),
                 target_price_value = COALESCE(target_price_value, %s)
             WHERE id = %s
             """,
-            (best_url, best_name, best_seller, best_target, keeper["id"]),
+            (best_url, best_name, best_seller, best_rating, best_reviews, best_target, keeper["id"]),
         )
 
         cur.execute("UPDATE price_history SET item_id=%s WHERE item_id = ANY(%s)", (keeper["id"], duplicate_ids))
@@ -272,9 +284,13 @@ def ensure_schema():
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS seller_name TEXT")
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS availability_text TEXT")
     cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS source_hint TEXT")
+    cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS rating_text TEXT")
+    cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS review_count_text TEXT")
     cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS url TEXT")
     cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_item_name TEXT")
     cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_seller_name TEXT")
+    cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_rating_text TEXT")
+    cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_review_count_text TEXT")
     cur.execute(
         """
         UPDATE items i
@@ -295,6 +311,39 @@ def ensure_schema():
                 AND phx.item_name IS NOT NULL
                 AND phx.item_name <> ''
           )
+        """
+    )
+    cur.execute(
+        """
+        UPDATE items i
+        SET
+            last_rating_text = COALESCE(
+                last_rating_text,
+                (
+                    SELECT CASE
+                        WHEN ph.rating_text IS NOT NULL AND ph.rating_text <> '' THEN ph.rating_text
+                        ELSE NULL
+                    END
+                    FROM price_history ph
+                    WHERE ph.item_id = i.id
+                    ORDER BY ph.ts DESC
+                    LIMIT 1
+                )
+            ),
+            last_review_count_text = COALESCE(
+                last_review_count_text,
+                (
+                    SELECT CASE
+                        WHEN ph.review_count_text IS NOT NULL AND ph.review_count_text <> '' THEN ph.review_count_text
+                        ELSE NULL
+                    END
+                    FROM price_history ph
+                    WHERE ph.item_id = i.id
+                    ORDER BY ph.ts DESC
+                    LIMIT 1
+                )
+            )
+        WHERE (i.last_rating_text IS NULL OR i.last_rating_text = '' OR i.last_review_count_text IS NULL OR i.last_review_count_text = '')
         """
     )
     cur.execute(
@@ -1044,7 +1093,16 @@ def get_marketing_deals(exclude_asins, limit=5):
         )
 
     deals.sort(key=lambda d: (d["best_percent"], d["ts"]), reverse=True)
-    return deals[:limit]
+
+    # Keep the strongest deals, but rotate the visible set on each refresh
+    # so the dashboard doesn't feel static across logins/page loads.
+    pool = deals[: max(limit * 5, limit)]
+    if len(pool) <= limit:
+        return pool
+
+    picked = random.sample(pool, limit)
+    picked.sort(key=lambda d: (d["best_percent"], d["ts"]), reverse=True)
+    return picked
 
 
 # ---------------- Scraper ----------------
@@ -1059,6 +1117,8 @@ async def scrape_one_amazon_sa(url_or_asin):
     out = {
         "timestamp": now_utc_str(),
         "item_name": None,
+        "rating_text": None,
+        "review_count_text": None,
         "price_text": None,
         "price_value": None,
         "coupon_text": None,
@@ -1130,6 +1190,46 @@ async def scrape_one_amazon_sa(url_or_asin):
                     pass
             if title and asin and clean_text(title).upper() == asin.upper():
                 title = None
+
+            # Rating + review count
+            rating_text = None
+            review_count_text = None
+            rating_selectors = [
+                "#acrPopover",
+                "span[data-hook='rating-out-of-text']",
+                ".a-icon-star .a-icon-alt",
+            ]
+            for sel in rating_selectors:
+                try:
+                    if sel == "#acrPopover":
+                        raw = await page.locator(sel).first.get_attribute("title", timeout=1600)
+                        if not raw:
+                            raw = await page.locator(sel).first.inner_text(timeout=1600)
+                    else:
+                        raw = await page.locator(sel).first.inner_text(timeout=1600)
+                    raw = clean_text(raw)
+                    if raw:
+                        m = re.search(r"(\d+(?:\.\d+)?)", raw)
+                        if m:
+                            rating_text = m.group(1)
+                            break
+                except Exception:
+                    continue
+            review_selectors = [
+                "#acrCustomerReviewText",
+                "[data-hook='total-review-count']",
+            ]
+            for sel in review_selectors:
+                try:
+                    raw = await page.locator(sel).first.inner_text(timeout=1600)
+                    raw = clean_text(raw)
+                    if raw:
+                        m = re.search(r"([\d,]+)", raw)
+                        if m:
+                            review_count_text = m.group(1)
+                            break
+                except Exception:
+                    continue
 
             # Availability / offers state
             availability_text = None
@@ -1302,6 +1402,8 @@ async def scrape_one_amazon_sa(url_or_asin):
             out.update(
                 {
                     "item_name": title,
+                    "rating_text": rating_text,
+                    "review_count_text": review_count_text,
                     "price_text": price_text,
                     "price_value": price_value,
                     "coupon_text": coupon_text,
@@ -1341,6 +1443,8 @@ def write_history(item_id, data, force=False):
     data["seller_name"] = clean_text(data.get("seller_name"))
     data["availability_text"] = clean_text(data.get("availability_text"))
     data["source_hint"] = clean_text(data.get("source_hint"))
+    data["rating_text"] = clean_text(data.get("rating_text"))
+    data["review_count_text"] = clean_text(data.get("review_count_text"))
 
     def as_float(v):
         try:
@@ -1358,10 +1462,12 @@ def write_history(item_id, data, force=False):
         (item_id,),
     )
     latest = cur.fetchone()
-    cur.execute("SELECT last_item_name, last_seller_name FROM items WHERE id=%s", (item_id,))
+    cur.execute("SELECT last_item_name, last_seller_name, last_rating_text, last_review_count_text FROM items WHERE id=%s", (item_id,))
     item_row = cur.fetchone()
     cached_item_name = clean_text(item_row.get("last_item_name")) if item_row else None
     cached_seller_name = clean_text(item_row.get("last_seller_name")) if item_row else None
+    cached_rating_text = clean_text(item_row.get("last_rating_text")) if item_row else None
+    cached_review_count_text = clean_text(item_row.get("last_review_count_text")) if item_row else None
 
     # Keep the last known descriptive fields if scrape misses them.
     if (not data.get("item_name")) and latest and latest.get("item_name"):
@@ -1372,6 +1478,14 @@ def write_history(item_id, data, force=False):
         data["seller_name"] = latest.get("seller_name")
     if (not data.get("seller_name")) and cached_seller_name:
         data["seller_name"] = cached_seller_name
+    if (not data.get("rating_text")) and latest and latest.get("rating_text"):
+        data["rating_text"] = latest.get("rating_text")
+    if (not data.get("rating_text")) and cached_rating_text:
+        data["rating_text"] = cached_rating_text
+    if (not data.get("review_count_text")) and latest and latest.get("review_count_text"):
+        data["review_count_text"] = latest.get("review_count_text")
+    if (not data.get("review_count_text")) and cached_review_count_text:
+        data["review_count_text"] = cached_review_count_text
     interval_str = get_setting("update_interval", "1800")  # default: 30 minutes
     try:
         interval_sec = int(interval_str)
@@ -1409,6 +1523,8 @@ def write_history(item_id, data, force=False):
                 and clean_text(latest.get("coupon_text")) == data.get("coupon_text")
                 and clean_text(latest.get("seller_name")) == data.get("seller_name")
                 and clean_text(latest.get("availability_text")) == data.get("availability_text")
+                and clean_text(latest.get("rating_text")) == data.get("rating_text")
+                and clean_text(latest.get("review_count_text")) == data.get("review_count_text")
             )
             if same_snapshot:
                 insert = False
@@ -1416,10 +1532,17 @@ def write_history(item_id, data, force=False):
     dirty = False
     new_item_name = data.get("item_name") or cached_item_name
     new_seller_name = data.get("seller_name") or cached_seller_name
-    if new_item_name != cached_item_name or new_seller_name != cached_seller_name:
+    new_rating_text = data.get("rating_text") or cached_rating_text
+    new_review_count_text = data.get("review_count_text") or cached_review_count_text
+    if (
+        new_item_name != cached_item_name
+        or new_seller_name != cached_seller_name
+        or new_rating_text != cached_rating_text
+        or new_review_count_text != cached_review_count_text
+    ):
         cur.execute(
-            "UPDATE items SET last_item_name=%s, last_seller_name=%s WHERE id=%s",
-            (new_item_name, new_seller_name, item_id),
+            "UPDATE items SET last_item_name=%s, last_seller_name=%s, last_rating_text=%s, last_review_count_text=%s WHERE id=%s",
+            (new_item_name, new_seller_name, new_rating_text, new_review_count_text, item_id),
         )
         dirty = True
 
@@ -1428,9 +1551,10 @@ def write_history(item_id, data, force=False):
             """
             INSERT INTO price_history(
                 item_id, ts, item_name, price_text, price_value, coupon_text,
-                discount_percent, error, seller_text, seller_name, availability_text, source_hint
+                discount_percent, error, seller_text, seller_name, availability_text, source_hint,
+                rating_text, review_count_text
             )
-            VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 item_id,
@@ -1445,6 +1569,8 @@ def write_history(item_id, data, force=False):
                 data.get("seller_name"),
                 data.get("availability_text"),
                 data.get("source_hint"),
+                data.get("rating_text"),
+                data.get("review_count_text"),
             ),
         )
         dirty = True
@@ -1673,11 +1799,16 @@ def index():
         seller = (latest.get("seller_name") or latest.get("seller_text")) if latest else None
         if not seller:
             seller = (it.get("last_seller_name") or "").strip() or None
-        it["latest_seller"] = normalize_seller_name(seller)
         it["latest_availability"] = latest.get("availability_text") if latest else None
+        normalized_seller = normalize_seller_name(seller)
+        if not normalized_seller and is_offers_only_text(it.get("latest_availability")):
+            normalized_seller = "No seller yet"
+        it["latest_seller"] = normalized_seller
         if (not it["latest_price_text"]) and it["latest_availability"]:
             it["latest_price_text"] = it["latest_availability"]
         it["coupon_text"] = latest.get("coupon_text") if latest else None
+        it["latest_rating"] = (latest.get("rating_text") if latest else None) or (it.get("last_rating_text") or "").strip() or None
+        it["latest_review_count"] = (latest.get("review_count_text") if latest else None) or (it.get("last_review_count_text") or "").strip() or None
         it["is_syncing"] = latest is None
         enriched.append(it)
 
@@ -1800,6 +1931,18 @@ def price_monitoring():
         except Exception:
             target_val = None
 
+        seller_name = normalize_seller_name(
+            (
+                r.get("effective_seller")
+                or r.get("seller_name")
+                or r.get("seller_text")
+                or r.get("last_seller_name")
+                or ""
+            ).strip() or None
+        )
+        if (not seller_name) and is_offers_only_text(r.get("availability_text")):
+            seller_name = "No seller yet"
+
         items.append(
             {
                 "id": r.get("id"),
@@ -1807,15 +1950,7 @@ def price_monitoring():
                 "url": r.get("url"),
                 "name": name,
                 "current_price_text": price_text,
-                "seller_name": normalize_seller_name(
-                    (
-                        r.get("effective_seller")
-                        or r.get("seller_name")
-                        or r.get("seller_text")
-                        or r.get("last_seller_name")
-                        or ""
-                    ).strip() or None
-                ),
+                "seller_name": seller_name,
                 "availability_text": (r.get("availability_text") or "").strip() or None,
                 "target_price_value": target_val,
                 "reached_at": reached_at,
@@ -2151,7 +2286,7 @@ def seed_item_from_known_data(item_id, asin):
     conn = db_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT last_item_name, last_seller_name FROM items WHERE id=%s", (item_id,))
+    cur.execute("SELECT last_item_name, last_seller_name, last_rating_text, last_review_count_text FROM items WHERE id=%s", (item_id,))
     item_row = cur.fetchone()
     if not item_row:
         conn.close()
@@ -2159,6 +2294,8 @@ def seed_item_from_known_data(item_id, asin):
 
     cached_name = (item_row.get("last_item_name") or "").strip() or None
     cached_seller = (item_row.get("last_seller_name") or "").strip() or None
+    cached_rating = (item_row.get("last_rating_text") or "").strip() or None
+    cached_reviews = (item_row.get("last_review_count_text") or "").strip() or None
 
     cur.execute(
         """
@@ -2239,6 +2376,32 @@ def seed_item_from_known_data(item_id, asin):
             cached_seller = fallback_seller
             changed = True
 
+    if (not cached_rating) or (not cached_reviews):
+        cur.execute(
+            """
+            SELECT
+                NULLIF(i.last_rating_text, '') AS rating_text,
+                NULLIF(i.last_review_count_text, '') AS review_count_text
+            FROM items i
+            WHERE i.asin=%s
+              AND i.id<>%s
+            ORDER BY i.created_at DESC, i.id DESC
+            LIMIT 1
+            """,
+            (asin, item_id),
+        )
+        rating_row = cur.fetchone()
+        fallback_rating = (rating_row.get("rating_text") or "").strip() if rating_row else ""
+        fallback_reviews = (rating_row.get("review_count_text") or "").strip() if rating_row else ""
+        if (fallback_rating and not cached_rating) or (fallback_reviews and not cached_reviews):
+            cur.execute(
+                "UPDATE items SET last_rating_text=%s, last_review_count_text=%s WHERE id=%s",
+                (fallback_rating or cached_rating, fallback_reviews or cached_reviews, item_id),
+            )
+            cached_rating = fallback_rating or cached_rating
+            cached_reviews = fallback_reviews or cached_reviews
+            changed = True
+
     if (not has_history) or (not has_numeric_history):
         cur.execute(
             """
@@ -2253,7 +2416,9 @@ def seed_item_from_known_data(item_id, asin):
                 ph.seller_text,
                 ph.seller_name,
                 ph.availability_text,
-                ph.source_hint
+                ph.source_hint,
+                ph.rating_text,
+                ph.review_count_text
             FROM items i
             JOIN price_history ph ON ph.item_id = i.id
             WHERE i.asin=%s
@@ -2275,9 +2440,10 @@ def seed_item_from_known_data(item_id, asin):
                     """
                     INSERT INTO price_history(
                         item_id, ts, item_name, price_text, price_value, coupon_text,
-                        discount_percent, error, seller_text, seller_name, availability_text, source_hint
+                        discount_percent, error, seller_text, seller_name, availability_text, source_hint,
+                        rating_text, review_count_text
                     )
-                    VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item_id,
@@ -2292,6 +2458,8 @@ def seed_item_from_known_data(item_id, asin):
                         source_row.get("seller_name") or cached_seller,
                         source_row.get("availability_text"),
                         source_row.get("source_hint") or "db_seed",
+                        source_row.get("rating_text") or cached_rating,
+                        source_row.get("review_count_text") or cached_reviews,
                     ),
                 )
                 changed = True
